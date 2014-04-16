@@ -1,0 +1,4 @@
+'{$STAMP BS2}
+MAIN: ' Continually Loop to keep the stamp busy
+   'DEBUG "Dummy Loop", CR
+GOTO MAIN

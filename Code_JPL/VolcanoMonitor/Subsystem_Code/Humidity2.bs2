@@ -1,0 +1,121 @@
+'{$STAMP BS2}
+'{$PBASIC 2.5}
+' SHT15.bs2 version C
+' (c) 2002, 2004 Tracy Allen, http://www.emesystems.com
+' access the Sensirion model sht11 or sht15
+' humidity and temperature chip
+' temperature to xx.x degrees Celsius, RH to xx.x %
+' Repeatedly shows raw data and converted values on debug screen.
+' version B, corrects glaring error in humidity computation
+' also adjusts timeout to allow use with faster stamps too.
+' version C updates the math for temperature compensation of %RH
+' and enables display of negative temperatures
+' hookup sht11 or sht15 as follows for this program
+'
+' STAMP SENSIRION
+' 220
+' p1 ----o-----/\/\---o--pin 3 sck, clock
+' |
+' ;---/\/\-----' pull-down
+' | 4.7k
+' Vss--o-o---------------pin 1 common
+' |
+' === 0.1uf
+' |
+' Vdd--o-o---------------pin 4 +5 volts
+' | 4.7k
+' '---/\/\-----; pull-up
+' |
+' 220 |
+' p0 ----------/\/\---o--pin 2 dta, data
+'
+'
+' The following code does not implement the CRC checking
+
+
+sck PIN 0
+dta PIN 2 ' note, 5k-10k pull-up, also 330ohm between the dta on stamp to dta on sht
+dtain VAR IN0
+
+shtTR CON 3 ' read temperature
+shtRH CON 5 ' read humidity
+shtSW CON 6 ' status register write
+shtSR CON 7 ' status register read
+shtS0 CON 30 ' restore status register defaults (be sure to delay 11 milliseconds)
+
+cmd VAR Byte
+result VAR Word ' raw result from sht, also used as counter
+r0 VAR result.BYTE0
+r1 VAR result.BYTE1
+degC VAR Word ' degrees Celsius * 100
+RH VAR Word ' %RH * 10
+RHtc VAR Word ' for temperature compensation of RH
+
+initialize:
+OUTS=0
+DIRS=%1111111111111101
+GOSUB shtrst ' reset communication with sht
+
+DO
+getTemperature:
+cmd=shtTR ' temperature command to sht
+GOSUB shtget16
+degC=result+5/10-400 ' from 100ths to 10ths of a degree with rounding
+DEBUG TAB,REP "-"\degC.BIT15,DEC ABS degC/10,".",DEC1 ABS degC
+getHumidity:
+cmd=shtRH ' humidity command to sht
+GOSUB shtget16
+RH=(26542-(54722**result+result))**result-40
+' temperature compensation follows:
+RHtc=655+(result*5)+(result**15917) ' intermediate factor
+RHtc=(RHtc**(degC+2480))-(RHtc**2730)+RH ' compensated value
+DEBUG TAB, DEC result,TAB,"%RH=",DEC RH/10,".",DEC1 RH
+DEBUG TAB,"%RHtc=",DEC RHtc/10,".",DEC1 RHtc,CR
+PAUSE 1000
+LOOP
+
+' initializes communication with sht
+shtRst:
+SHIFTOUT dta,sck,LSBFIRST,[$ffff\16]
+RETURN
+
+' get 16 bits of data, enter with command in "cmd"
+shtget16:
+GOSUB shtcmd ' send the command "cmd"
+GOSUB shtwait ' wait for command to finish
+SHIFTIN dta,sck,MSBPRE,[r1] ' msbyte
+LOW dta ' acknowledge
+PULSOUT sck,10
+INPUT dta
+SHIFTIN dta,sck,MSBPRE,[r0] ' lsbyte
+INPUT dta ' terminate communication
+PULSOUT sck,10
+RETURN
+
+' send start sequence and command
+shtcmd:
+shtStart: ' send the start sequence
+' dta: ~~~~~|_____|~~~~~~
+' sck: ___|~~~|_|~~~~|____
+' while dta is low, clock goes low and then high
+INPUT dta ' pullup high
+HIGH sck
+LOW dta
+LOW sck
+HIGH sck
+INPUT dta
+LOW sck
+shtcmd1: ' send the command
+SHIFTOUT dta,sck,MSBFIRST,[cmd]
+INPUT dta ' allow acknowledge
+PULSOUT sck,10
+RETURN
+
+shtWait:
+' wait for sht to pull data pin low
+' or for time out
+result=4096
+DO
+result=result-1
+LOOP WHILE dta & result.BIT11
+RETURN

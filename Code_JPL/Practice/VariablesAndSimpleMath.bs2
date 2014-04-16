@@ -1,0 +1,21 @@
+'VariablesAndSimpleMath.bs2
+'Declare vars & use them to solve a few arithmetic problems.
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+value               VAR       Word      'Declare variables
+anothervalue        VAR       Word
+
+value = 500                             'Initialize variables
+anothervalue = 2000
+
+DEBUG ? value                           'Display values
+DEBUG ? anothervalue
+
+value = 10 * anothervalue               'Perform operations
+
+DEBUG ? value                           'Display values again
+DEBUG ? anothervalue
+
+END

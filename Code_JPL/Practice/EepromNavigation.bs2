@@ -1,0 +1,91 @@
+'EepromNavigation.bs2
+'Navigate using characters stored in EEPROM
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+DEBUG "Programming Running!"
+
+'---- [Variables] -------------
+
+pulseCount        VAR             Word          'Stores number of pulses
+address           VAR             Byte          'Stores EEPROM address
+instruction       VAR             Byte          'Stores EEPROM instruction
+counter           VAR             Byte
+
+'-----[EEEPROM Data] ----------
+
+'   Address: 0123456789                         'These two commented lines show
+'            ||||||||||                         'EEPROM address of each datum
+DATA        "FLFFRBLBBQ"                        'Navigation instructions
+
+'-----[Initialization]----------
+
+SEROUT 14, 84, [22, 12]
+PAUSE 5
+SEROUT 14, 84, ["Program Running!"]
+
+FOR counter = 1 TO 5                            'DO...LOOP that turns ON/OFF the LCD
+  PAUSE 600
+  SEROUT 14, 84, [22]
+  PAUSE 400
+  SEROUT 14, 84, [21]
+NEXT
+
+'------- [Main Routine] ------------
+
+DO UNTIL (instruction = "Q")
+
+  READ address, instruction                     'Data at address in instruction
+  address = address + 1                         'Add 1 to address for next read
+
+  SELECT instruction
+    CASE "F": GOSUB Forward                     'Call a different subroutine
+    CASE "B": GOSUB Backward                    'for each possible character
+    CASE "L": GOSUB Left_Turn                   'that can be fetched from
+    CASE "R": GOSUB Right_Turn                  'EEPROM
+  ENDSELECT
+
+LOOP
+
+END                                             'Stop executing until reset
+
+'------ [Subroutine - Forward]--------
+
+Forward:                                        'Forward subroutine
+  FOR pulseCount = 1 TO 64                      'Send 64 fwd pulses
+    PULSOUT 13, 850                             '1.7ms pulse to left servo
+    PULSOUT 12, 650                             '1.3ms pulse to right servo
+    PAUSE 20                                    'Pause 20ms
+  NEXT
+  RETURN                                        'Return to Main Routine Loop
+
+'------- [Subroutine - Backward] ------
+
+Backward:                                       'Backward subroutine
+  FOR pulseCount = 1 TO 64                      'Send 64 backward pulses
+    PULSOUT 13, 650                             '1.3ms pulse to left servo
+    PULSOUT 12, 850                             '1.7ms pulse to right servo
+    PAUSE 20
+  NEXT
+  RETURN
+
+'------ [Subroutine - Left_Turn] ------
+
+Left_Turn:
+  FOR pulseCount = 1 TO 24
+    PULSOUT 13, 650
+    PULSOUT 12, 650
+    PAUSE  20
+  NEXT
+  RETURN
+
+'------- [Subroutine - Right_Turn] -----
+
+Right_Turn:
+  FOR pulseCount = 1 TO 24
+    PULSOUT 13, 850
+    PULSOUT 12, 850
+    PAUSE 20
+  NEXT
+  RETURN

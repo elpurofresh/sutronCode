@@ -1,0 +1,106 @@
+'{$Stamp BS2pe}
+'{$PBASIC 2.5}
+'BASIC Stamp II (BS2-IC) Program Listing #3
+'***************************************************************************************************************************
+'* Title: DS1302_3.BS2 Author: Stephen Swanson Date: 1/11/99 *
+'* *
+'* Description: Trickle Charge timer enabled version of DS1302_2.BS2. *
+'* *
+'***************************************************************************************************************************
+Clk              PIN       8
+Dta              PIN       9
+RTCReset         PIN       10
+
+RTCCmd           VAR       Byte
+Temp             VAR       Byte
+Seconds          VAR       Byte
+Minutes          VAR       Byte
+Hours            VAR       Byte
+Date             VAR       Byte
+Month            VAR       Byte
+Year             VAR       Byte
+I                VAR       Byte
+
+'Define Constants
+SecReg           CON       %00000
+MinReg           CON       %00001
+HrsReg           CON       %00010
+DateReg          CON       %00011
+MonReg           CON       %00100
+YrReg            CON       %00110
+CtrlReg          CON       %00111
+BrstReg          CON       %11111
+Tric             CON       %10010000
+OFF              CON       %11110000 'turns off trickle charge
+
+'Spring: Feb-Apr, every 5  days, 1, 6, 12, 18, 24, ON FOR 2 hours/day, 1 to 2am
+'Summer: May-Jul, every 1  day,  1 to 31, ON FOR 6 hours/day, 1 to 6am
+'Fall:   Aug-Oct, every 5  days, 1, 6, 12, 18, 24, ON FOR 2 hours/day, 1 to 2am
+'Winter: Nov-Jan, every 15 days, 1, 16, ON FOR 2 hours/day, 1 to 2am
+
+DEBUG CLS
+PAUSE 1000
+
+'---------------------------------------------------------------------------------------------------------
+'Comment all this section if it is desired to read only the actual time
+
+' trickle timer settings
+Temp = OFF 'change this variable to off or the setting that you want the ds1302 to charge at see data sheet
+RTCCmd = TRIC
+'GOSUB trick
+
+Temp = $10      ' Clear Write Protect bit in control register
+RTCCmd = CtrlReg
+GOSUB WriteRTC
+Temp = $07      ' Year
+RTCCmd = YrReg
+GOSUB WriteRTC
+Temp = $11       ' Month
+RTCCmd = MonReg
+GOSUB WriteRTC
+Temp = $10       ' Day
+RTCCmd = DateReg
+GOSUB WriteRTC
+Temp = $21      ' Hour
+RTCCmd = HrsReg
+GOSUB WriteRTC
+Temp = $09      ' Min
+RTCCmd = MinReg
+GOSUB WriteRTC
+Temp = $00      ' Sec
+RTCCmd = SecReg
+GOSUB WriteRTC
+Temp = $80      ' Set Write Protect bit in control register
+RTCCmd = CtrlReg
+GOSUB WriteRTC
+
+'---------------------------------------------------------------------------------------------------------
+
+LOOP1:
+GOSUB ReadRTCBurst
+DEBUG HOME,DEC Hours.HIGHNIB,DEC Hours.LOWNIB,":",DEC Minutes.HIGHNIB
+DEBUG DEC Minutes.LOWNIB,":",DEC Seconds.HIGHNIB,DEC Seconds.LOWNIB
+DEBUG " ",DEC Month.HIGHNIB,DEC Month.LOWNIB,"/"
+DEBUG DEC Date.HIGHNIB, DEC Date.LOWNIB,"/",DEC Year.HIGHNIB, DEC Year.LOWNIB,CR
+PAUSE 1000
+GOTO LOOP1
+
+Trick:
+HIGH RTCReset
+SHIFTOUT Dta, Clk, LSBFIRST, [RTCCmd,Temp]
+LOW RTCReset
+RETURN
+
+WriteRTC:
+'Write to DS1202 RTC
+HIGH RTCReset
+SHIFTOUT Dta, Clk, LSBFIRST, [%0\1,RTCCmd\5,%10\2,Temp]
+LOW RTCReset
+RETURN
+
+ReadRTCBurst:
+HIGH RTCReset
+SHIFTOUT Dta, Clk, LSBFIRST, [%1\1,BrstReg\5,%10\2]
+SHIFTIN Dta, Clk, LSBPRE, [Seconds,Minutes,Hours,Date,Month,Year,Year]
+LOW RTCReset
+RETURN

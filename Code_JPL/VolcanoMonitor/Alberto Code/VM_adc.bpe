@@ -1,0 +1,340 @@
+'   {$STAMP BS2pe}
+'   {$PBASIC 2.5}
+'
+' =========================================================================
+
+'Program for reading analog signals that run through the A/D converter
+
+' -------------------------------------------------------------------------
+' I/O Definitions
+' -------------------------------------------------------------------------
+Hum_clk        PIN     0                       ' Humidity Clock
+Free_1         PIN     1                       ' Free
+Hum_data       PIN     2                       ' Humidity Data
+SO2_Pwr        PIN     3                       ' Voltage Relay Control (Pump & SO2 Sensor)
+Free           PIN     4                       ' Free
+Modem_Pwr      PIN     5                       ' Modem Power
+Modem_RX       PIN     6                       ' Modem Read
+Modem_Tx       PIN     7                       ' Modem Write
+RTC_Clk        PIN     8                       ' 1302 RTC Clock
+RTC_Data       PIN     9                       ' 1302 RTC Data
+RTC_Reset      PIN    10                       ' 1302 RTC Reset
+AD_Din         PIN    11                       ' 1270 data out of the ADC, in to the Stamp
+AD_Dout        PIN    12                       ' 1270 data in to the Stamp, out of the ADC
+AD_CS          PIN    13                       ' 1270 "chip select" pin
+AD_Clk         PIN    14                       ' 1270 clock pin
+LCD_Pin        PIN    15                       ' LCD Connection
+
+' -------------------------------------------------------------------------
+' Constants
+' -------------------------------------------------------------------------
+ShtTemp CON %00011                             ' read temperature
+ShtHumi CON %00101                             ' read humidity
+ShtStatW CON %00110                            ' status register write
+ShtStatR CON %00111                            ' status register read
+ShtReset CON %11110                            ' soft reset
+' 1-Wire Support
+'
+OW_FERst        CON     %0001                   ' Front-End Reset
+OW_BERst        CON     %0010                   ' Back-End Reset
+OW_BitMode      CON     %0100
+OW_HighSpd      CON     %1000
+
+ReadROM         CON     $33                     ' read ID, serial num, CRC
+MatchROM        CON     $55                     ' look for specific device
+SkipROM         CON     $CC                     ' skip rom (one device)
+SearchROM       CON     $F0                     ' search
+
+
+DegSym          CON     176
+Ack CON 0
+NoAck CON 1
+No CON 0
+Yes CON 1
+
+' LCD constants and commands
+lcdClear           CON           12              ' Form Feed, Clear and Home
+lcdNone            CON           22              ' No Cursor
+lcdBlock           CON           25              ' Cursor on and blink character
+lcdLine            CON           24              ' Cursor on and no blink character
+lcdLine1           CON           128             ' sets cursor to start of line 1
+lcdLine2           CON           148             ' sets cursor to start of line 2
+lcdLine3           CON           168             ' sets cursor to start of line 3
+lcdLine4           CON           188             ' sets cursor to start of line 4
+
+' BaudRate
+
+#IF ($STAMP < BS2P) #THEN
+  #ERROR "This program requires BS2p, BS2pe, or BS2px"
+#ENDIF
+
+#SELECT $stamp
+  #CASE BS2E, BS2PE
+    lcdBaudRate        CON           32          ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16416       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+    'SO2SensRate      CON           0           ' Depth 4800, Sensor, 8 bits, no parity, 1 stop, True
+  #CASE BS2SX, BS2P
+    lcdBaudRate        CON           110         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16494       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+    'SO2SensRate      CON           0           ' Depth 4800, Sensor, 8 bits, no parity, 1 stop, true
+  #CASE BS2PX
+    lcdBaudRate        CON           188         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16572       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+    'SO2SensRate      CON           17197       ' Depth 4800, Sensor, 8 bits, no parity, 1 stop, true
+#ENDSELECT
+
+
+'Do we need this???
+
+'#DEFINE System = 1 'Change to 2 if using System 2
+
+'#IF System = 1 #THEN
+'Temp1          DATA     $28, $D2, $B8, $E5, $00, $00, $00, $0D
+'Temp2          DATA     $28, $52, $CD, $E5, $00, $00, $00, $58
+'Temp3          DATA     $28, $57, $06, $E6, $00, $00, $00, $69
+'Temp4          DATA     $28, $56, $CA, $E5, $00, $00, $00, $D5
+'Temp5          DATA     $28, $92, $78, $E5, $00, $00, $00, $5A
+'Temp6          DATA     $28, $A1, $B9, $E5, $00, $00, $00, $01
+'TempB          DATA     $22, $31, $62, $14, $00, $00, $00, $EB
+'TempA          DATA     $22, $9B, $A1, $09, $00, $00, $00, $B1
+'#ENDIF
+
+'#IF System = 2 #THEN
+'Temp1          DATA     $28, $DE, $04, $E6, $00, $00, $00, $96
+'Temp2          DATA     $28, $62, $EE, $E5, $00, $00, $00, $03
+'Temp3          DATA     $28, $5C, $FC, $E5, $00, $00, $00, $02
+'Temp4          DATA     $28, $3E, $75, $E5, $00, $00, $00, $97
+'Temp5          DATA     $28, $20, $D9, $E5, $00, $00, $00, $CD
+'Temp6          DATA     $28, $56, $7A, $E5, $00, $00, $00, $9A
+'Temp7          DATA     $22, $DC, $45, $14, $00, $00, $00, $21
+'Temp8          DATA     $22, $F7, $65, $14, $00, $00, $00, $97
+'#ENDIF
+
+' -----[ Temporary Variable Space ]-------------------------------------------
+'
+Byte_1          VAR     Byte      ' General Purpose Data (Byte)
+Byte_2          VAR     Byte      ' General Purpose Data (Byte)
+Byte_3          VAR     Byte      ' General Purpose Data (Byte)
+Word_1          VAR     Word      ' General Purpose Data (Word)
+Word_2          VAR     Word      ' General Purpose Data (Word)
+
+' -------------------------------------------------------------------------
+' Variables
+' -------------------------------------------------------------------------
+
+counter       VAR     Nib             ' Place holder for returning after VM_hum
+
+' Humidity
+ioByte    VAR   Byte_1                             ' data from/to SHT11
+ackBit    VAR   Bit                                ' ack/nak from/to SHT11
+toDelay   VAR   Byte_2                             ' timeout delay timer
+timeOut   VAR   Bit                                ' timeout status
+soT       VAR   Word_1                             ' temp counts from SHT11
+tC        VAR   Word_2                             ' temp - Celcius
+tF        VAR   Word                               ' temp - Fahrenheit
+soRH      VAR   Word                               ' humidity counts
+rhLin     VAR   Word                               ' humidity; linearized
+rhTrue    VAR   Word                               ' humidity; compensated
+status    VAR   Byte                               ' status byte
+
+
+' Time
+Seconds    VAR Byte_1
+Minutes    VAR Byte_2
+Hours      VAR Byte_3
+Date       VAR Byte
+Month      VAR Byte
+Year       VAR Byte
+
+Current_Record  VAR     Byte_2                  ' Pointer in Memory to current reading
+Record_Index    VAR     Word                    ' Memory Index
+Record_Length   CON     26                      ' Number of Bytes to store 1 reading
+i               VAR     Byte                    ' Generic Index
+
+Address            VAR           Byte_1          ' Address in RAM Pack to write or read from
+DataWord           VAR           Word_1          ' Used to hold data to be sent or received
+ErrorCount         VAR           Byte_2          ' Number of connection attempts
+
+
+'DATA          @0, (132)                          ' 11 * 12 = 132 Setup area for data sensor data
+
+
+'Do we need this???"
+
+'Readings       DATA    (312)          ' 26 * 12 = 312 Setup area for data sensor data
+'Data transmitted once per day, recorded every 2 hours
+'Data budget: 12K per month, 387 bytes per day. 32 bytes per reading are allowed
+'26 * 12 = 312 Bytes/day
+
+
+' -----[ ADC Constants ]-------------------------------------------------------
+
+CH0            CON     0                       ' analog channels
+CH1            CON     1
+CH2            CON     2
+CH3            CON     3
+CH4            CON     4
+CH5            CON     5
+CH6            CON     6
+CH7            CON     7
+
+AdcUP5          CON     0                       ' unipolar, 0 - 5 v
+AdcBP5          CON     1                       ' bipolar, +/- 5 v
+AdcUP10         CON     2                       ' unipolar, 0 - 10 v
+AdcBP10         CON     3                       ' bipolar, +/- 10 v
+Adc420          CON     4                       ' 4-20 mA input
+
+
+' -----[ ADC Variables ]-------------------------------------------------------
+
+
+chan            VAR     Nib                     ' ADC channel (0 - 7)
+mode            VAR     Nib                     ' ADC mode (0 - 4)
+config          VAR     Byte                    ' configuration byte
+adcRes          VAR     Nib                     ' ADC bits (1 - 12)
+adcRaw          VAR     Word_1                  ' ADC result (raw)
+mVolts          VAR     Word_2                  ' ADC in millivolts
+
+
+
+' -----[ EEPROM Data ]-----------------------------------------------------
+
+
+AdcCfg          DATA    %10000000, %10010000, %10100000, %10110000, %11000000, %11010000, %11100000, %11110000 ' 0-5
+                'DATA    %10000100, %10010100, %10100100, %10110100, %11000100, %11010100, %11100100, %11110100 ' +/-5
+                'DATA    %10001000, %10011000, %10101000, %10111000, %11001000, %11011000, %11101000, %11111000 ' 0-10
+                'DATA    %10001100, %10011100, %10101100, %10111100, %11001100, %11011100, %11101100, %11111100 ' +/-10
+                'DATA    %10000000, %10010000, %10100000, %10110000, %11000000, %11010000, %11100000, %11110000 ' 4-20
+
+
+
+' -----[ Initialization ]--------------------------------------------------
+
+Setup:
+  LOW AD_clk                                     ' preset control lines
+  HIGH AD_CS
+
+  adcRes = 12                                   ' use all ADC bits
+
+
+' -----[ Program Code ]----------------------------------------------------
+
+Main:
+
+  ' read single-ended analog inputs
+  ' -- display input as volts
+  '
+  DEBUG CR
+  mode = AdcUP5
+  PAUSE 3000
+  DEBUG "ADC Data", CR
+  DEBUG "----------", CR
+  FOR chan = CH0 TO CH1
+    GOSUB Read_ADC
+    DEBUG "CH", ("0" + chan), ".... ",
+          DEC (mVolts / 1000), ".", DEC3 mVolts, CR      'Display is in volts
+    IF chan = CH0 THEN GOSUB Store_Voltage
+    'IF chan = CH1 THEN GOSUB Store_SO2
+  'NEXT
+  'PAUSE 3000
+  'RUN 1                                             'Pause between readings
+  'GOTO Main
+    IF chan = CH1 THEN
+       GOSUB Pump
+       GOSUB Store_SO2
+    ENDIF
+  NEXT
+  PAUSE 3000                                             'Pause between readings
+DEBUG "Going to Iridium"
+  RUN 1
+
+' -----[ Subroutines ]-----------------------------------------------------
+
+
+' Reads analog input channel (0 - 5 vdc)
+' -- put channel (0 - 7) in "chan"
+' -- pass mode (0 - 4) in "mode")
+' -- raw value returned in "adcRaw"
+' -- "adcRaw" converted to signed "mVolts"
+
+Read_ADC:
+  READ AdcCfg + (mode * 4 + chan), config       ' get config
+  LOW AD_CS                                     ' select MAX1270
+  SHIFTOUT AD_Dout, AD_clk, MSBFIRST, [config]     ' send config byte
+  HIGH AD_CS                                    ' deselect MAX1270
+  adcRaw = 0
+  LOW AD_CS
+  SHIFTIN AD_Din, AD_clk, MSBPRE, [adcRaw\12]     ' read channel value
+  HIGH AD_CS
+
+  ' adjust ADC count for input voltage divider
+  '
+  adcRaw = adcRaw + (adcRaw ** $D6C) MAX 4095   ' x ~1.05243
+
+
+  ' millivolts conversion
+  ' -- returns signed value in bipolar modes
+  ' -- uses raw (12-bit) value
+  '
+  SELECT mode
+    CASE AdcUP5
+      mVolts = adcRaw + (adcRaw ** $3880)       ' x 1.2207
+
+    CASE AdcBP5
+      IF (adcRaw < 2048) THEN
+        mVolts = 2 * adcRaw + (adcRaw ** $7100) ' x 2.4414
+      ELSE
+        adcRaw = 4095 - adcRaw
+        mVolts = -(2 * adcRaw + (adcRaw ** $7100))
+      ENDIF
+
+    CASE AdcUP10
+      mVolts = 2 * adcRaw + (adcRaw ** $7100)   ' x 2.4414
+
+    CASE AdcBP10
+      IF (adcRaw < 2048) THEN
+        mVolts = 4 * adcRaw + (adcRaw ** $E1FF)
+      ELSE
+        adcRaw = 4095 - adcRaw
+        mVolts = -(4 * adcRaw + (adcRaw ** $E1FF))
+      ENDIF
+
+    CASE Adc420                                 ' -- 4000 to 20000
+      mVolts = 5 * adcRaw + (adcRaw ** $1666)   ' x 5.0875
+
+  ENDSELECT
+
+  ' adjust adcRaw for selected resolution
+  '
+  IF (adcRes < 12) THEN
+    adcRaw = adcRaw >> (12 - adcRes)            ' reduce resolution
+  ENDIF
+
+  RETURN
+
+  Store_Voltage:
+    PUT Record_Index + 7, mVolts
+    RETURN
+
+  Store_SO2:
+    PUT Record_Index + 6, mVolts
+    'IF Record_Index + 6 >= 100 THEN GOSUB BURST
+    'IF (Minutes = 0) THEN GOSUB ITS_TIME                              ' Records every 1 hour
+    RETURN
+
+  ITS_TIME:
+    counter = 4
+    RUN 1
+
+  BURST:
+    counter = 3
+    RUN 1
+
+  Pump:
+  DEBUG "Got inside Pump!", CR
+  HIGH SO2_Pwr
+  PAUSE 5000
+
+  LOW SO2_Pwr
+  PAUSE 2000
+  RETURN

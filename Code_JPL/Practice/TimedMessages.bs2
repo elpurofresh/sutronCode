@@ -1,0 +1,19 @@
+
+'TimedMessages.bs2
+'Show how the PAUSE command can be used to display msgs at human speeds.
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+DEBUG "Start timer..."
+
+PAUSE 1000
+DEBUG CR, "One sec..."
+
+PAUSE 2000
+DEBUG CR, "Three sec later..."
+
+PAUSE 1000
+DEBUG CR, "Done."
+
+END

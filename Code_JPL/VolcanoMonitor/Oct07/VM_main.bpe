@@ -1,0 +1,180 @@
+' {$STAMP BS2pe, VM_hum.bpe, VM_adc.bpe, VM_iridium.bpe}
+' {$PBASIC 2.5}
+
+' -------------------------------------------------------------------------
+
+#IF ($STAMP < BS2P) #THEN
+  #ERROR "This program requires BS2p, BS2pe, or BS2px"
+#ENDIF
+
+' BaudRate
+
+#SELECT $stamp
+  #CASE BS2E, BS2PE
+    lcdBaudRate        CON           32          ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16416       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2SX, BS2P
+    lcdBaudRate        CON           110         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16494       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2PX
+    lcdBaudRate        CON           188         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16572       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+#ENDSELECT
+
+' -------------------------------------------------------------------------
+' I/O Definitions
+' -------------------------------------------------------------------------
+
+Hum_clk        PIN     0                       ' Humidity Clock
+Hum_Pwr        PIN     1                       ' Humidity Power
+Hum_data       PIN     2                       ' Humidity Data
+SO2_Pwr        PIN     3                       ' Voltage Relay Control (Pump & SO2 Sensor)
+Free           PIN     4                       ' Free
+Modem_Pwr      PIN     5                       ' Modem Power
+Modem_RX       PIN     6                       ' Modem Read
+Modem_Tx       PIN     7                       ' Modem Write
+RTC_Clk        PIN     8                       ' 1302 RTC Clock
+RTC_Data       PIN     9                       ' 1302 RTC Data
+RTC_Reset      PIN    10                       ' 1302 RTC Reset
+AD_Din         PIN    11                       ' 1270 data out of the ADC, in to the Stamp
+AD_Dout        PIN    12                       ' 1270 data in to the Stamp, out of the ADC
+AD_CS          PIN    13                       ' 1270 "chip select" pin
+AD_Clk         PIN    14                       ' 1270 clock pin
+LCD_Pin        PIN    15                       ' LCD Connection
+
+
+' LCD constants and commands
+lcdClear           CON           12              ' Form Feed, Clear and Home
+lcdNone            CON           22              ' No Cursor
+lcdBlock           CON           25              ' Cursor on and blink character
+lcdLine            CON           24              ' Cursor on and no blink character
+lcdLine1           CON           128             ' sets cursor to start of line 1
+lcdLine2           CON           148             ' sets cursor to start of line 2
+lcdLine3           CON           168             ' sets cursor to start of line 3
+lcdLine4           CON           188             ' sets cursor to start of line 4
+DegSym             CON           176
+
+' -------------------------------------------------------------------------
+' Global Variables
+' -------------------------------------------------------------------------
+
+soT        VAR Word                                ' degrees Celsius * 100
+rhTrue     VAR Word                                ' for temperature compensation of RH
+Bat_Voltg  VAR Word                                ' Battery Voltage
+SO2_Value  VAR Word                                ' SO2 Reading
+
+Rate       VAR Bit                                 ' Low Rate (1/hour = 0), High Rate (1/ 5 mins = 1)
+ErrorCount VAR Byte                                ' Number of Iridium connection attempt errors
+MsgFlag    VAR  Bit
+
+' -----[ Temporary Variable Space ]-------------------------------------------
+'
+Byte_1          VAR     Byte      ' General Purpose Data (Byte)
+Byte_2          VAR     Byte      ' General Purpose Data (Byte)
+Byte_3          VAR     Byte      ' General Purpose Data (Byte)
+Byte_4          VAR     Byte      ' General Purpose Data (Byte)
+Word_1          VAR     Word      ' General Purpose Data (Word)
+Word_2          VAR     Word      ' General Purpose Data (Word)
+Seconds    VAR  Byte
+Minutes    VAR  Byte
+Hours      VAR  Byte
+Month      VAR  Byte
+Date       VAR  Byte
+Year       VAR  Byte
+
+' -------------------------------------------------------------------------
+' Local Variables
+' -------------------------------------------------------------------------
+
+' Time
+'Seconds    VAR  Byte_1
+'Minutes    VAR  Byte_2
+'Hours      VAR  Byte_3
+'Month      VAR  Byte_4
+'Date       VAR  Word_1.BYTE0
+'Year       VAR  Word_1.BYTE1
+
+i          VAR  Byte_1                               ' Generic Index
+
+
+
+' -------------------------------------------------------------------------
+' Intialization
+' -------------------------------------------------------------------------
+
+
+Init:
+SEROUT LCD_Pin, lcdBaudRate, [lcdClear] : PAUSE 200         ' Clear Screen
+SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdLine1, "JPL Volcano Monitor"]
+SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdLine2+4, "SO2 Sensor"]
+SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdLine3, "A. Behar  A. Davies"]
+SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdLine4, "behar@jpl.nasa.gov"]
+'DEBUG CLS
+PAUSE 3000                                                  ' Wait for Display
+SEROUT LCD_Pin, lcdBaudRate, [lcdClear] : PAUSE 12          ' Clear LCD Screen
+
+' -------------------------------------------------------------------------
+' Program Code
+' -------------------------------------------------------------------------
+
+
+'Begin
+' Check Minute
+' If time for Recording Sensors then do
+' Otherwise sleep for 50 sec.
+'Loop to Begin
+
+DEBUG "Before Main Rate: ", BIN Rate, " MsgFlag: ", BIN MsgFlag, CR
+IF MsgFlag = 0 THEN      'If there is no message OR no initial value, set Rate=1
+  Rate = 1    ' Set to one to get a message every 5 mins.
+  ELSE
+  GOTO Main
+ENDIF
+
+DEBUG "AFTER Main Rate: ", BIN Rate, " MsgFlag: ", BIN MsgFlag, CR
+
+Main:
+
+     SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdLine4, "Awake"]          ' Display status on LCD
+     GOSUB Get_Time
+     GOSUB Print_Time                                      ' Display Current time
+
+
+    IF ((Rate = 0) AND (Minutes = 0)) OR ((Rate = 1) AND ((Minutes // 5)= 0)) THEN   ' Records every hour (every 5 mins, high rate)
+
+       DEBUG "Going to HUM", CR
+       RUN 1                                                 ' Run Humidity, Adc, Iridium Routines
+
+     ELSE
+
+       SEROUT LCD_Pin, lcdBaudRate, [lcdLine4, "Sleep       "]          ' Display status on LCD
+       FOR i = 0 TO 15 : INPUT i : NEXT
+       SLEEP 50                                 ' Sleep 50 seconds before checking to see if time for next reading
+
+    ENDIF
+
+GOTO Main
+
+' -------------------------------------------------------------------------
+' Subroutines
+' -------------------------------------------------------------------------
+
+Get_Time:
+  HIGH RTC_Reset
+  SHIFTOUT RTC_Data, RTC_Clk, LSBFIRST, [%1\1,%11111\5,%10\2]
+  SHIFTIN  RTC_Data, RTC_Clk, LSBPRE, [Seconds,Minutes,Hours,Date,Month,Year,Year]
+  Seconds = 10 * Seconds.HIGHNIB + Seconds.LOWNIB
+  Minutes = 10 * Minutes.HIGHNIB + Minutes.LOWNIB
+  Hours   = 10 * Hours.HIGHNIB   + Hours.LOWNIB
+  Date    = 10 * Date.HIGHNIB    + Date.LOWNIB
+  Month   = 10 * Month.HIGHNIB   + Month.LOWNIB
+  Year    = 10 * Year.HIGHNIB    + Year.LOWNIB
+  LOW RTC_Reset
+RETURN
+
+Print_Time:
+  DEBUG "T", DEC2 Hours,":", DEC2 Minutes, ":", DEC2 Seconds,
+        "  D", DEC2 Month, "/", DEC2 Date, "/", DEC2 Year, " ", CR
+  SEROUT LCD_Pin, lcdBaudRate, [lcdLine1, "T", DEC2 Hours,":", DEC2 Minutes, ":", DEC2 Seconds,
+                                          "  D", DEC2 Month, "/", DEC2 Date, "/", DEC2 Year ]
+RETURN

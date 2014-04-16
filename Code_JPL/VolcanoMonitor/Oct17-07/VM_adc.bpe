@@ -1,0 +1,144 @@
+' {$STAMP BS2pe}
+' {$PBASIC 2.5}
+
+' -------------------------------------------------------------------------
+
+#IF ($STAMP < BS2P) #THEN
+  #ERROR "This program requires BS2p, BS2pe, or BS2px"
+#ENDIF
+
+' BaudRate
+
+#SELECT $stamp
+  #CASE BS2E, BS2PE
+    lcdBaudRate        CON           32          ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16416       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2SX, BS2P
+    lcdBaudRate        CON           110         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16494       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2PX
+    lcdBaudRate        CON           188         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16572       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+#ENDSELECT
+
+' -------------------------------------------------------------------------
+' I/O Definitions
+' -------------------------------------------------------------------------
+
+Hum_clk        PIN     0                       ' Humidity Clock
+Hum_Pwr        PIN     1                       ' Humidity Power
+Hum_data       PIN     2                       ' Humidity Data
+SO2_Pwr        PIN     3                       ' Voltage Relay Control (Pump & SO2 Sensor)
+Free           PIN     4                       ' Free
+Modem_Pwr      PIN     5                       ' Modem Power
+Modem_RX       PIN     6                       ' Modem Read
+Modem_Tx       PIN     7                       ' Modem Write
+RTC_Clk        PIN     8                       ' 1302 RTC Clock
+RTC_Data       PIN     9                       ' 1302 RTC Data
+RTC_Reset      PIN    10                       ' 1302 RTC Reset
+AD_Din         PIN    11                       ' 1270 data out of the ADC, in to the Stamp
+AD_Dout        PIN    12                       ' 1270 data in to the Stamp, out of the ADC
+AD_CS          PIN    13                       ' 1270 "chip select" pin
+AD_Clk         PIN    14                       ' 1270 clock pin
+LCD_Pin        PIN    15                       ' LCD Connection
+
+
+' LCD constants and commands
+lcdClear           CON           12              ' Form Feed, Clear and Home
+lcdNone            CON           22              ' No Cursor
+lcdBlock           CON           25              ' Cursor on and blink character
+lcdLine            CON           24              ' Cursor on and no blink character
+lcdLine1           CON           128             ' sets cursor to start of line 1
+lcdLine2           CON           148             ' sets cursor to start of line 2
+lcdLine3           CON           168             ' sets cursor to start of line 3
+lcdLine4           CON           188             ' sets cursor to start of line 4
+DegSym             CON           176
+
+' -------------------------------------------------------------------------
+' Global Variables
+' -------------------------------------------------------------------------
+
+soT        VAR Word                                ' degrees Celsius * 100
+rhTrue     VAR Word                                ' for temperature compensation of RH
+Bat_Voltg  VAR Word                                ' Battery Voltage
+SO2_Value  VAR Word                                ' SO2 Reading
+
+Rate       VAR Bit                                 ' Low Rate (1/hour = 0), High Rate (1/ 5 mins = 1)
+ErrorCount VAR Byte                                ' Number of Iridium connection attempt errors
+
+' -----[ Temporary Variable Space ]-------------------------------------------
+'
+Byte_1          VAR     Byte      ' General Purpose Data (Byte)
+Byte_2          VAR     Byte      ' General Purpose Data (Byte)
+Byte_3          VAR     Byte      ' General Purpose Data (Byte)
+Byte_4          VAR     Byte      ' General Purpose Data (Byte)
+Word_1          VAR     Word      ' General Purpose Data (Word)
+Word_2          VAR     Word      ' General Purpose Data (Word)
+Seconds    VAR  Byte
+Minutes    VAR  Byte
+Hours      VAR  Byte
+Month      VAR  Byte
+Date       VAR  Byte
+Year       VAR  Byte
+
+' -------------------------------------------------------------------------
+' Local Variables
+' -------------------------------------------------------------------------
+
+' -----[ ADC Constants ]-------------------------------------------------------
+
+Chan1Cfg       CON     %10000000
+Chan2Cfg       CON     %10010000
+Chan3Cfg       CON     %10100000
+Chan4Cfg       CON     %10110000
+Chan5Cfg       CON     %11000000
+Chan6Cfg       CON     %11010000
+Chan7Cfg       CON     %11100000
+Chan8Cfg       CON     %11110000
+
+' -----[ ADC Variables ]-------------------------------------------------------
+
+chan            VAR     Byte_1                  ' ADC channel (0 - 7)
+adcRaw          VAR     Word_1                  ' ADC result (raw)
+mVolts          VAR     Word_2                  ' ADC in millivolts
+
+' -------------------------------------------------------------------------
+' Intialization
+' -------------------------------------------------------------------------
+
+  LOW AD_clk                                     ' preset control lines
+  HIGH AD_CS
+
+' -------------------------------------------------------------------------
+' Program Code
+' -------------------------------------------------------------------------
+
+Get_ADC_Values:
+
+  LOW AD_CS                                         ' select MAX1270
+  SHIFTOUT AD_Dout, AD_clk, MSBFIRST, [Chan1Cfg]    ' send config byte
+  SHIFTIN AD_Din, AD_clk, MSBPRE, [adcRaw\12]       ' read channel value
+  HIGH AD_CS                                        ' deselect MAX1270
+  adcRaw = adcRaw + (adcRaw ** $D6C) MAX 4095      ' x ~1.05243   ' adjust ADC count for input voltage divider
+  mVolts = adcRaw + (adcRaw ** $4150)               ' millivolts conversion
+  Bat_Voltg = mVolts * 3                            ' voltage divider conversion
+
+  DEBUG "BVt:", DEC2 (Bat_Voltg/1000), ".", DEC2 Bat_Voltg/10, "  "           'Display is in volts
+  SEROUT LCD_Pin, lcdBaudRate, [lcdLine3,"BVt:", DEC2 (Bat_Voltg/1000), ".", DEC2 Bat_Voltg/10]
+
+  HIGH SO2_Pwr                                                                  ' Turn on SO2, Pump, Modem Regulator
+  HIGH Modem_Pwr                                                                ' Turn Modem on
+  PAUSE 5000
+  LOW AD_CS                                         ' select MAX1270
+  SHIFTOUT AD_Dout, AD_clk, MSBFIRST, [Chan2Cfg]    ' send config byte
+  SHIFTIN AD_Din, AD_clk, MSBPRE, [adcRaw\12]       ' read channel value
+  HIGH AD_CS                                        ' deselect MAX1270
+
+  mVolts = adcRaw + (adcRaw ** $3980)               ' millivolts conversion
+  SO2_Value = mVolts
+
+  DEBUG "SO2:", DEC (SO2_Value / 1000), ".", DEC2 SO2_Value/10, CR      'Display is in volts
+  SEROUT LCD_Pin, lcdBaudRate, [lcdLine3+11,"SO2:", DEC2 SO2_Value/1000,".", DEC2 SO2_Value/10]
+
+  DEBUG "Going to Iridium"
+RUN 3

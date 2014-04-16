@@ -1,0 +1,166 @@
+' {$STAMP BS2pe}
+' {$PBASIC 2.5}
+
+' -------------------------------------------------------------------------
+
+#IF ($STAMP < BS2P) #THEN
+  #ERROR "This program requires BS2p, BS2pe, or BS2px"
+#ENDIF
+
+' BaudRate
+
+#SELECT $stamp
+  #CASE BS2E, BS2PE
+    lcdBaudRate        CON           32          ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16416       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2SX, BS2P
+    lcdBaudRate        CON           110         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16494       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2PX
+    lcdBaudRate        CON           188         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16572       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+#ENDSELECT
+
+' -------------------------------------------------------------------------
+' I/O Definitions
+' -------------------------------------------------------------------------
+
+Hum_clk        PIN     0                       ' Humidity Clock
+Hum_Pwr        PIN     1                       ' Humidity Power
+Hum_data       PIN     2                       ' Humidity Data
+SO2_Pwr        PIN     3                       ' Voltage Relay Control (Pump & SO2 Sensor)
+Free           PIN     4                       ' Free
+Modem_Pwr      PIN     5                       ' Modem Power
+Modem_RX       PIN     6                       ' Modem Read
+Modem_Tx       PIN     7                       ' Modem Write
+RTC_Clk        PIN     8                       ' 1302 RTC Clock
+RTC_Data       PIN     9                       ' 1302 RTC Data
+RTC_Reset      PIN    10                       ' 1302 RTC Reset
+AD_Din         PIN    11                       ' 1270 data out of the ADC, in to the Stamp
+AD_Dout        PIN    12                       ' 1270 data in to the Stamp, out of the ADC
+AD_CS          PIN    13                       ' 1270 "chip select" pin
+AD_Clk         PIN    14                       ' 1270 clock pin
+LCD_Pin        PIN    15                       ' LCD Connection
+
+
+' LCD constants and commands
+lcdClear           CON           12              ' Form Feed, Clear and Home
+lcdNone            CON           22              ' No Cursor
+lcdBlock           CON           25              ' Cursor on and blink character
+lcdLine            CON           24              ' Cursor on and no blink character
+lcdLine1           CON           128             ' sets cursor to start of line 1
+lcdLine2           CON           148             ' sets cursor to start of line 2
+lcdLine3           CON           168             ' sets cursor to start of line 3
+lcdLine4           CON           188             ' sets cursor to start of line 4
+DegSym             CON           176
+
+' -------------------------------------------------------------------------
+' Global Variables
+' -------------------------------------------------------------------------
+
+soT        VAR Word                                ' degrees Celsius * 100
+rhTrue     VAR Word                                ' for temperature compensation of RH
+Bat_Voltg  VAR Word                                ' Battery Voltage
+SO2_Value  VAR Word                                ' SO2 Reading
+
+Rate       VAR Bit                                 ' Low Rate (1/hour = 0), High Rate (1/ 5 mins = 1)
+ErrorCount VAR Byte                                ' Number of Iridium connection attempt errors
+MsgFlag    VAR  Bit
+
+' -----[ Temporary Variable Space ]-------------------------------------------
+'
+Byte_1          VAR     Byte      ' General Purpose Data (Byte)
+Byte_2          VAR     Byte      ' General Purpose Data (Byte)
+Byte_3          VAR     Byte      ' General Purpose Data (Byte)
+Byte_4          VAR     Byte      ' General Purpose Data (Byte)
+Word_1          VAR     Word      ' General Purpose Data (Word)
+Word_2          VAR     Word      ' General Purpose Data (Word)
+Seconds    VAR  Byte
+Minutes    VAR  Byte
+Hours      VAR  Byte
+Month      VAR  Byte
+Date       VAR  Byte
+Year       VAR  Byte
+
+' -------------------------------------------------------------------------
+' Local Variables
+' -------------------------------------------------------------------------
+
+shtTR CON 3 ' read temperature
+shtRH CON 5 ' read humidity
+shtSW CON 6 ' status register write
+shtSR CON 7 ' status register read
+shtS0 CON 30 ' restore status register defaults (be sure to delay 11 milliseconds)
+
+' Humidity/Inside Temp
+
+cmd VAR Byte_1
+result VAR Word_1     ' raw result from sht, also used as counter
+r0 VAR result.BYTE0
+r1 VAR result.BYTE1
+RH VAR Word_2         ' %RH * 10
+
+
+GET_Humidity:
+   HIGH Hum_Pwr          ' Turn on Humidity Sensor
+   cmd=shtTR             ' temperature command to sht
+   GOSUB shtget16
+   soT=result+5/10-400   ' from 100ths to 10ths of a degree with rounding
+   DEBUG "Tmp:", DEC2 ABS soT/10,".",DEC1 ABS soT, "c  "
+
+   cmd=shtRH             ' humidity command to sht
+   GOSUB shtget16
+   RH=(26542-(54722**result+result))**result-40
+   ' temperature compensation follows:
+   rhTrue=655+(result*5)+(result**15917) ' intermediate factor
+   rhTrue=(rhTrue**(soT+2480))-(rhTrue**2730)+RH ' compensated value
+
+   DEBUG "rHum: ",DEC2 rhTrue/10,"%", CR
+
+   SEROUT LCD_Pin, lcdBaudRate, [lcdLine2,"Tmp:", REP "-"\soT.BIT15,DEC2 ABS soT/10,".",DEC1 ABS soT, "c  rHum: ", DEC2 rhTrue/10, "% "]
+   LOW   Hum_Pwr                                            ' Turn OFF the Humidity Sensor
+
+RUN 2 ' Go to ADC (Battery, SO2)
+
+
+' get 16 bits of data, enter with command in "cmd"
+shtget16:
+   GOSUB shtcmd                          ' send the command "cmd"
+   GOSUB shtwait                         ' wait for command to finish
+   SHIFTIN Hum_data,Hum_clk,MSBPRE,[r1]  ' msbyte
+   LOW Hum_data                          ' acknowledge
+   PULSOUT Hum_clk,10
+   INPUT Hum_data
+   SHIFTIN Hum_data,Hum_clk,MSBPRE,[r0]  ' lsbyte
+   INPUT Hum_data                        ' terminate communication
+   PULSOUT Hum_clk,10
+
+RETURN
+
+' send start sequence and command
+shtcmd:
+shtStart: ' send the start sequence
+   ' SHT_Data: ~~~~~|_____|~~~~~~
+   ' SHT_Clk: ___|~~~|_|~~~~|____
+   ' while SHT_Data is low, clock goes low and then high
+   INPUT Hum_data ' pullup high
+   HIGH Hum_clk
+   LOW Hum_data
+   LOW Hum_clk
+   HIGH Hum_clk
+   INPUT Hum_data
+   LOW Hum_clk
+shtcmd1: ' send the command
+   SHIFTOUT Hum_data,Hum_clk,MSBFIRST,[cmd]
+   INPUT Hum_data ' allow acknowledge
+   PULSOUT Hum_clk,10
+RETURN
+
+shtWait:
+' wait for sht to pull data pin low
+' or for time out
+   result=4096
+   DO
+     result=result-1
+   LOOP WHILE Hum_data & result.BIT11
+RETURN

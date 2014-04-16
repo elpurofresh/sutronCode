@@ -1,0 +1,26 @@
+'InputsTest.bs2
+'Displays the state of the I/O pins
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+'DEBUG "Buttons States", CR,
+'      "Left    Right ", CR,
+'      "------  ------"
+
+'DO
+' DEBUG CRSRXY, 0 ,3,
+'      "P5 = ", BIN1 IN5,
+'     "   P7 = ", BIN1 IN7
+'PAUSE 50
+'LOOP
+
+SEROUT 14, 84, [22, 12]
+  PAUSE 5
+
+DO
+  SEROUT 14, 84, [135, "P5: ", BIN1 IN5,              'Displays the text and
+                  155, "P7: ", BIN1 IN7]              'the binary value of the
+  PAUSE 100                                           'PIN 5 & 7
+
+LOOP

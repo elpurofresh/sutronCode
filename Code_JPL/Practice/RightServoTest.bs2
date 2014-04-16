@@ -1,0 +1,27 @@
+'RightServoTest.bs2
+'Right servo turns clockwise 3sec, stops 1sec & then counterclockwise 3sec
+
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+DEBUG "Program Running"
+
+counter        VAR           Word
+
+FOR counter = 1 TO 122
+  PULSOUT 12, 650
+  PAUSE 20
+NEXT
+
+FOR counter = 1 TO 40
+  PULSOUT 12, 750
+  PAUSE 20
+NEXT
+
+FOR counter = 1 TO 122
+  PULSOUT 12, 850
+  PAUSE 20
+NEXT
+
+END

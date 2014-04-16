@@ -1,0 +1,15 @@
+
+'PulseP13LED.bs2
+'Sends a 0.13sec pulse to the LED circuit connected to P13 every 2sec.
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+DEBUG "Program Running!"
+
+DO
+  'PULSOUT 13, 850
+  PULSOUT 12, 750
+  PAUSE 20
+LOOP
+

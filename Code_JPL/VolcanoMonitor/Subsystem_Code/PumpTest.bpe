@@ -1,0 +1,63 @@
+' {$STAMP BS2pe}
+' {$PBASIC 2.5}
+' PumpTest.bpe
+
+'-------------------------------------------------------------------
+' A test program to check on the status of the pump.
+' Last modification: 09/28/2007
+' By Andres Mora.
+'-------------------------------------------------------------------
+
+
+
+'------------------[ PINAGE ]----------------------------------------
+SO2_Pwr              PIN     3            ' SO2 Power Voltage Relay
+lcdPin               PIN    15            ' Pin out for the LCD
+
+'------------------[ Variables & Constants ]--------------------------
+lcdClear             CON    12            ' Form Feed, Clear and Home
+lcdNone              CON    22            ' No Cursor
+lcdLine1             CON    128           ' sets cursor to start of line 1
+lcdLine2             CON    148           ' sets cursor to start of line 2
+lcdLine3             CON    168           ' sets cursor to start of line 3
+lcdLine4             CON    188           ' sets cursor to start of line 4
+counter              VAR    Word
+
+#IF ($STAMP < BS2P) #THEN
+  #ERROR "This program requires BS2p, BS2pe, or BS2px"
+#ENDIF
+
+#SELECT $stamp
+  #CASE BS2E, BS2PE
+    lcdBaudRate        CON           32        ' LCD, 19200 Baud, 8-bit, No-parity, True
+  #CASE BS2SX, BS2P
+    lcdBaudRate        CON           110       ' LCD, 19200 Baud, 8-bit, No-parity, True
+  #CASE BS2PX
+    lcdBaudRate        CON           188       ' LCD, 19200 Baud, 8-bit, No-parity, True
+#ENDSELECT
+
+
+'------------------[ Initialization ]-------------------------------
+
+SEROUT lcdPin, lcdBaudRate, [lcdClear, lcdNone] :  PAUSE 100
+SEROUT lcdPin, lcdBaudRate, [lcdNone, lcdLine1, " Checking the Pump "] : PAUSE 10
+
+PAUSE 2000                                      ' A little wait so that the pump won't start right away.
+
+'------------------[ Main Code ]------------------------------------
+'Turns ON/OFF the pump every 5secs.
+
+FOR counter = 0 TO 2
+  SEROUT lcdPin, lcdBaudRate, [lcdNone, lcdLine3, " Loop# ", DEC counter] : PAUSE 10
+  HIGH SO2_Pwr
+  SEROUT lcdPin, lcdBaudRate, [lcdNone, lcdLine2, " Pump is ON "] : PAUSE 10
+  PAUSE 5000
+  LOW SO2_Pwr
+  SEROUT lcdPin, lcdBaudRate, [lcdNone, lcdLine2, " Pump is OFF "] : PAUSE 10
+  PAUSE 5000
+NEXT
+
+SEROUT lcdPin, lcdBaudRate, [lcdNone, lcdLine4, " Finished "] : PAUSE 10
+
+END
+

@@ -1,0 +1,13 @@
+'First test...
+'Andres Mora 18/09/2007
+
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+DEBUG "Hello, this is a message from your Boe-Bot."
+
+END
+
+
+

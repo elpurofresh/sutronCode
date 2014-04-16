@@ -1,0 +1,21 @@
+'LCDTestMsg.bs2
+'Displays a msg on the Parallax serial LCD.
+
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+SEROUT 14, 84, [22, 12]                 'Initialize the LCD  14(pin), baud mode, [clean, clear cursor]
+PAUSE 5
+
+SEROUT 14, 84, ["Cool Stuff!", 13,      'Text message, CR, more text message
+               "The LCD works!"]
+
+'END
+
+DO                                      'DO...LOOP that turns ON/OFF the LCD
+  PAUSE 600
+  SEROUT 14, 84, [22]
+  PAUSE 400
+  SEROUT 14, 84, [21]
+LOOP

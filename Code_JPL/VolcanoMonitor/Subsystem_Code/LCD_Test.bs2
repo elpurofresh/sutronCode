@@ -1,0 +1,30 @@
+'{ $STAMP BS2pe }
+'{$PBASIC 2.5}
+
+
+
+' -----[ Constants ]------------------------------------------------------------
+counter              VAR         Byte
+TxPin         PIN    15                             ' LCD pin
+
+#SELECT $STAMP
+  #CASE BS2, BS2E, BS2PE
+    Baud19200       CON     32
+  #CASE BS2SX, BS2P
+    Baud19200       CON     110
+  #CASE BS2PX
+    Baud19200       CON     188
+#ENDSELECT
+
+
+'-----------[ Program ]----------------------------------------------------------
+
+DO
+SEROUT TxPin, Baud19200, [12] : PAUSE 120           ' Clear Screen
+SEROUT TxPin, Baud19200, [22]                       ' Remove Cursor
+SEROUT TxPin, Baud19200, [151, "Jason Box X200"]
+SEROUT TxPin, Baud19200, [171, "Cam Controller"]
+PAUSE 2000                                           ' Display Hold
+
+SEROUT TxPin, Baud19200, [12] : PAUSE 120           ' Clear LCD Screen
+LOOP

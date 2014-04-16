@@ -1,0 +1,10 @@
+'HelloOnceEveryNSeconds.bs2
+'Displays a Hello every 'n' seconds
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+DO
+  DEBUG "Hello!", CR
+  PAUSE 1000
+LOOP

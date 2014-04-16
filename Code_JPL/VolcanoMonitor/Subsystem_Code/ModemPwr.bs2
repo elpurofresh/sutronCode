@@ -1,0 +1,216 @@
+'{$STAMP BS2pe}
+'{$PBASIC 2.5}
+'--------------------------------------------------------------------------------------
+' Last modification: Oct, 3rd, 2007
+' By Andres Mora
+'--------------------------------------------------------------------------------------
+
+
+SHT_Clk         PIN     0                       ' SHT11 Clock
+Tmp_Rst         PIN     1                       ' DS1620.3 (Reset)
+SHT_Data        PIN     2                       ' SHT11 Data  bi-directional data
+Reg_Pwr         PIN     3                       ' Voltage Regulator Control Pin
+Tmp_DQ          PIN     4                       ' DS1620.1 (data I/O)
+Modem_Pwr       PIN     5                       ' Modem Power
+Modem_RX        PIN     6                       ' Modem Read
+Modem_Tx        PIN     7                       ' Modem Write
+RTC_Clk         PIN     8                       ' 1302 RTC Clock
+RTC_Data        PIN     9                       ' 1302 RTC Data
+RTC_Reset       PIN    10                       ' 1302 RTC Reset
+AD_CS           PIN    11                       ' 0831 "chip select" pin
+AD_Clk          PIN    12                       ' 0831 clock pin
+AD_Data         PIN    13                       ' 0831 data pin
+Tmp_Clk         PIN    14                       ' DS1620.2 (Clock)
+LCD_Pin         PIN    15                       ' LCD Connection
+
+' BaudRate
+#SELECT $stamp
+  #CASE BS2, BS2E, BS2PE
+    lcdBaudRate        CON           32          ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16416       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2SX, BS2P
+    lcdBaudRate        CON           110         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16494       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2PX
+    lcdBaudRate        CON           188         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16572       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+#ENDSELECT
+
+
+SEROUT LCD_Pin, lcdBaudRate, [lcdClear] : PAUSE 200         ' Clear Screen
+SEROUT LCD_Pin, lcdBaudRate, [lcdNone]                      ' Remove Cursor
+SEROUT LCD_Pin, lcdBaudRate, [lcdLine2,         "   Box/Balog Cam"]
+SEROUT LCD_Pin, lcdBaudRate, [lcdNone,lcdLine3, "       Andres"]
+DEBUG CLS
+DEBUG "Box/Balog Cam", CR                                     ' Display On Debug Window
+PAUSE 2000                                                 ' Wait for Display
+
+
+' Variables
+Address            VAR           Word            ' Address in RAM Pack to write or read from
+DataByte           VAR           Byte            ' Used to hold data to be sent or received
+ConnectCount       VAR           Word            ' Number of connection attempts
+Checksum           VAR           Word            ' Checksum to send to Iridium modem
+End_Address        VAR           Word            ' Stores Read End of FIFO pointer
+
+
+' LCD constants and commands
+lcdClear           CON           12              ' Form Feed, Clear and Home
+lcdNone            CON           22              ' No Cursor
+lcdBlock           CON           25              ' Cursor on and blink character
+lcdLine            CON           24              ' Cursor on and no blink character
+lcdLine1           CON           128             ' sets cursor to start of line 1
+lcdLine2           CON           148             ' sets cursor to start of line 2
+lcdLine3           CON           168             ' sets cursor to start of line 3
+lcdLine4           CON           188             ' sets cursor to start of line 4
+
+
+
+MAIN: ' Continually Loop to keep the stamp busy
+   DEBUG "Turn Modem On", CR
+   HIGH Reg_Pwr                                  ' Wait for 10 seconds for Modem to register
+   HIGH Modem_Pwr
+   PAUSE 1000
+   PAUSE 9000
+
+
+
+lblInitIridium:
+  End_Address = 20
+
+  SEROUT LCD_Pin, lcdBaudRate, [lcdClear]  : PAUSE 12                         ' Clear LCD
+  SEROUT LCD_Pin,lcdBaudRate,25,[lcdClear,lcdLine1,"Calling...",137]          ' Sending confirmation to the LCD
+  DEBUG "Checking Modem..."
+
+   SEROUT Modem_TX, ModemBaudRate, 25, ["AT" , CR]                               ' Check communication with modem
+   SERIN Modem_RX, ModemBaudRate, 2500, lblIridiumError1, [ WAIT ("OK")]         ' Wait for response
+   SEROUT LCD_Pin,lcdBaudRate, [lcdNone,lcdLine2,"Modem Responded",137]
+   DEBUG "Modem Responded", CR
+   PAUSE 3000
+
+   SEROUT Modem_TX, ModemBaudRate, 25, ["AT&D0" , CR]                               ' Check communication with modem
+   SERIN Modem_RX, ModemBaudRate, 2500, lblIridiumError1, [ WAIT ("OK")]         ' Wait for response
+   SEROUT LCD_Pin,lcdBaudRate, [lcdNone,lcdLine2,"Ignore DTR Input"]
+   DEBUG "Ignore DTR Input", CR
+   PAUSE 3000
+
+   SEROUT Modem_TX, ModemBaudRate, 25, ["AT&K0" , CR]                               ' Check communication with modem
+   SERIN Modem_RX, ModemBaudRate, 2500, lblIridiumError1, [ WAIT ("OK")]         ' Wait for response
+   SEROUT LCD_Pin,lcdBaudRate, [lcdNone,lcdLine2,"Disable RTS/CTS Flow Control"]
+   DEBUG "Disable RTS/CTS Flow Control", CR
+   PAUSE 3000
+
+'   PAUSE 5000
+'   DEBUG "Turn Modem Off", CR
+'   LOW Modem_Pwr
+'   PAUSE 5000
+
+'  SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDWB=" , DEC End_Address, CR]       ' Send SBD command
+'  SERIN Modem_RX, ModemBaudRate, 2500, lblIridiumError2, [ WAIT ("READY")]      ' Wait for response
+'  SEROUT LCD_Pin,lcdBaudRate,25,[lcdLine2, "Transfer Data...", 154]           ' Sending confirmation to the LCD
+'  DEBUG  "Transfering Data..." , CR                                          ' Display On Debug Window
+
+' Reads contents of Memory and sends information to Iridium modem
+
+'  Checksum = 0                                                               ' Reset checksum value
+'  FOR Address = 0 TO End_Address - 1
+'     DataByte = Address
+'     DEBUG HEX2 DataByte, " "
+'    IF (Address+1 // 40) <> 0 THEN jump1
+'      DEBUG CR
+'    jump1:
+'    Checksum = Checksum + DataByte
+'    SEROUT Modem_TX, ModemBaudRate, 25, [DataByte]                              ' Send byte To Iridium modem in Hexadecimal
+'  NEXT
+'    DEBUG CR
+
+' Send checksum and wait response from modem
+
+'  SEROUT Modem_TX, ModemBaudRate,25,[checksum.HIGHBYTE]
+'  SEROUT Modem_TX, ModemBaudRate,25,[checksum.LOWBYTE]
+'  SERIN Modem_RX, ModemBaudRate, 2500, lblIridiumError3, [ WAIT ( "0",CR )]
+'   DEBUG "Data Uploaded", CR
+
+
+' Initiate SBD transfer and wait response from modem
+
+'  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine3, "Sending SBD..."]               ' Display status on LCD
+'  DEBUG "Sending Binary SBD..."                                                    ' Display On Debug Window
+'  SEROUT Modem_TX, ModemBaudRate,25,[ "AT+SBDI",CR]
+'  SERIN Modem_RX, ModemBaudRate, [WAIT ( "SBDI:"), DataByte]
+'  SERIN Modem_RX, ModemBaudRate, 65000, lblIridiumError4, [WAIT ( "SBDI:"), DataByte]
+'  IF DataByte = "2" THEN
+'    GOTO lblIridiumError4
+'  ENDIF
+
+' Clear the message buffer and wait response from modem
+
+'  SEROUT Modem_TX, ModemBaudRate,25,[ "AT+SBDD0",CR]
+'  SEROUT LCD_Pin, lcdBaudRate,5,["Sent!"]                                ' Display status on LCD
+'  DEBUG "Sent!", CR, CR
+'  PAUSE 1000                                                            ' Display on Debug Window
+
+' Initiate SBD transfer and wait response from modem
+
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdClear, lcdLine1, "Sending SBDWT: HELLO"]               ' Display status on LCD
+  DEBUG "Upload  SBD..."                                                    ' Display On Debug Window
+  SEROUT Modem_TX, ModemBaudRate,25,["AT+SBDWT=Hello!", CR]
+  SERIN Modem_RX, ModemBaudRate, 65000, lblIridiumError2, [WAIT ("OK")]
+  SEROUT LCD_Pin,lcdBaudRate, [lcdNone,lcdLine2,"SBD Accepted..."]
+  DEBUG "SBD Accepted..."                                                    ' Display On Debug Window
+  PAUSE 3000
+
+' Initiate SBD transfer and wait response from modem
+
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdClear, lcdLine1, "Sending SBDI..."]               ' Display status on LCD
+  DEBUG "Sending TXT SBD..."                                                    ' Display On Debug Window
+  SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDI", CR]
+  SERIN Modem_RX, ModemBaudRate, 65000, lblIridiumError3, [WAIT ("SBDI:"), DataByte]
+  IF DataByte = 50 THEN
+    GOTO lblIridiumError4
+  ENDIF
+  SEROUT LCD_Pin,lcdBaudRate, [lcdNone,lcdLine2,"Snd Res #:", DEC DataByte, "..."]
+  DEBUG "Snd Res #:", DEC DataByte, "..."
+  PAUSE 3000
+
+' Clear the message buffer and wait response from modem
+  SEROUT LCD_Pin,lcdBaudRate, [lcdClear, lcdLine1,"Clr Buffer & Wait Response"]
+  SEROUT Modem_TX, ModemBaudRate,25,[ "AT+SBDD0",CR]
+  SEROUT LCD_Pin,lcdBaudRate, [lcdNone,lcdLine1,"Buffered Cleared!"]    ' Display status on LCD
+  DEBUG "Buffer Cleared!", CR, CR
+  PAUSE 5000                                                            ' Display on Debug Window
+
+
+GOTO Main
+
+lblIridiumError1:
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine3, "IRIDIUM ERROR"]            ' Display error message on LCD
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine4, "Check phone.    "]         ' Display error message on LCD
+  DEBUG CR, "IRIDIUM ERROR - Check phone.", CR, CR                          ' Display On Debug Window
+  PAUSE 2000                                                            ' Pause 2s
+  GOTO Main
+
+lblIridiumError2:
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine3, "IRIDIUM ERROR"]            ' Display error message on LCD
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine4, "Error on Data.  "]         ' Display error message on LCD
+  DEBUG CR, "IRIDIUM ERROR - Error on Data.", CR, CR                        ' Display On Debug Window
+  PAUSE 2000                                                            ' Pause 2s
+  GOTO Main
+
+ lblIridiumError3:
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine3, "IRIDIUM ERROR"]            ' Display error message on LCD
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine4, "SBDI command.   "]         ' Display error message on LCD
+  DEBUG CR, "IRIDIUM ERROR - SBDI command.", CR, CR                         ' Display On Debug Window
+  PAUSE 2000                                                            ' Pause 2s
+  GOTO Main
+
+
+lblIridiumError4:
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine3, "IRIDIUM ERROR"]            ' Display error message on LCD
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine4, "Snd err."]                 ' Display error message on LCD
+  DEBUG CR, "IRIDIUM ERROR - Send error.", CR, CR                            ' Display On Debug Window
+'  DEBUG CR, "IRIDIUM ERROR - Send error. Retry 1", CR, CR                   ' Display On Debug Window
+'  SEROUT Modem_TX, ModemBaudRate,25,[ "AT+SBDI",CR]
+'  SERIN Modem_RX, ModemBaudRate, [WAIT ( "SBDI: "), DEC DataByte]
+  PAUSE 2000                                                            ' Pause 2s
+  GOTO Main

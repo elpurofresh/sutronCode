@@ -1,0 +1,32 @@
+'LCDTestNumbers.bs2
+'Displays the number values with the Parallax serial LCD.
+
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+counter              VAR         Byte
+
+SEROUT 14, 84, [22, 12]
+PAUSE 5
+
+FOR counter = 0 TO 10                         'Count to 12; increment at 1/2sec
+  SEROUT 14, 84, [DEC counter, " "]           'the ," " concatenates a blank space between values
+  PAUSE 500
+NEXT
+
+SEROUT 14, 84, [12]                            'Cleans the screen and displays the text
+PAUSE 5                                        'centered on the screen
+SEROUT 14, 84, [135, "ALL", 154, "DONE!"]
+
+
+SEROUT 14, 84, [12]
+PAUSE 5
+FOR counter = 0 TO 10                          'Moves the text between " " to the left or
+  SEROUT 14, 84, [148 + counter, " Line-2"]    'right depending on the value of counter
+  PAUSE 250
+NEXT
+
+
+
+END

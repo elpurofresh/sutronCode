@@ -1,0 +1,17 @@
+'ServosP13CcwP12Cw.bs2
+'Turns P13 servo counter clockwise & P12 clockwise
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+DEBUG "The LED @ pin 13 is blinking!"
+
+DO
+
+  PULSOUT 13, 650
+  PULSOUT 12, 650
+  PAUSE 20
+  'PULSOUT 13, 650
+  'PULSOUT 12, 650
+  'PAUSE 20
+LOOP

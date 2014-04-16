@@ -1,0 +1,257 @@
+' {$STAMP BS2pe}
+' {$PBASIC 2.5}
+
+' -------------------------------------------------------------------------
+
+#IF ($STAMP < BS2P) #THEN
+  #ERROR "This program requires BS2p, BS2pe, or BS2px"
+#ENDIF
+
+' BaudRate
+
+#SELECT $stamp
+  #CASE BS2E, BS2PE
+    lcdBaudRate        CON           32          ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16416       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2SX, BS2P
+    lcdBaudRate        CON           110         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16494       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+  #CASE BS2PX
+    lcdBaudRate        CON           188         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16572       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+#ENDSELECT
+
+' -------------------------------------------------------------------------
+' I/O Definitions
+' -------------------------------------------------------------------------
+
+Hum_clk        PIN     0                       ' Humidity Clock
+Hum_Pwr        PIN     1                       ' Humidity Power
+Hum_data       PIN     2                       ' Humidity Data
+SO2_Pwr        PIN     3                       ' Voltage Relay Control (Pump & SO2 Sensor)
+Free           PIN     4                       ' Free
+Modem_Pwr      PIN     5                       ' Modem Power
+Modem_RX       PIN     6                       ' Modem Read
+Modem_Tx       PIN     7                       ' Modem Write
+RTC_Clk        PIN     8                       ' 1302 RTC Clock
+RTC_Data       PIN     9                       ' 1302 RTC Data
+RTC_Reset      PIN    10                       ' 1302 RTC Reset
+AD_Din         PIN    11                       ' 1270 data out of the ADC, in to the Stamp
+AD_Dout        PIN    12                       ' 1270 data in to the Stamp, out of the ADC
+AD_CS          PIN    13                       ' 1270 "chip select" pin
+AD_Clk         PIN    14                       ' 1270 clock pin
+LCD_Pin        PIN    15                       ' LCD Connection
+
+
+' LCD constants and commands
+lcdClear           CON           12              ' Form Feed, Clear and Home
+lcdNone            CON           22              ' No Cursor
+lcdBlock           CON           25              ' Cursor on and blink character
+lcdLine            CON           24              ' Cursor on and no blink character
+lcdLine1           CON           128             ' sets cursor to start of line 1
+lcdLine2           CON           148             ' sets cursor to start of line 2
+lcdLine3           CON           168             ' sets cursor to start of line 3
+lcdLine4           CON           188             ' sets cursor to start of line 4
+DegSym             CON           176
+
+' -------------------------------------------------------------------------
+' Global Variables
+' -------------------------------------------------------------------------
+
+soT        VAR Word                                ' degrees Celsius * 100
+rhTrue     VAR Word                                ' for temperature compensation of RH
+Bat_Voltg  VAR Word                                ' Battery Voltage
+SO2_Value  VAR Word                                ' SO2 Reading
+
+Rate       VAR Bit                                 ' Low Rate (1/hour = 0), High Rate (1/ 5 mins) = 1)
+ErrorCount VAR Byte                                ' Number of Iridium connection attempt errors
+MsgFlag    VAR  Bit
+
+' -----[ Temporary Variable Space ]-------------------------------------------
+'
+Byte_1          VAR     Byte      ' General Purpose Data (Byte)
+Byte_2          VAR     Byte      ' General Purpose Data (Byte)
+Byte_3          VAR     Byte      ' General Purpose Data (Byte)
+Byte_4          VAR     Byte      ' General Purpose Data (Byte)
+Word_1          VAR     Word      ' General Purpose Data (Word)
+Word_2          VAR     Word      ' General Purpose Data (Word)
+Seconds    VAR  Byte
+Minutes    VAR  Byte
+Hours      VAR  Byte
+Month      VAR  Byte
+Date       VAR  Byte
+Year       VAR  Byte
+
+' -------------------------------------------------------------------------
+' Local Variables
+' -------------------------------------------------------------------------
+
+i          VAR  Byte_1                               ' Generic Index
+Resp       VAR  Byte_2
+counter    VAR  Byte_3
+DataWord   VAR  Byte_4
+
+
+' -------------------------------------------------------------------------
+' Program Code
+' -------------------------------------------------------------------------
+
+Main:
+  GOSUB Init_Modem
+  GOSUB Send_Iridium
+  GOSUB Rcv_Iridium
+
+MdmOFF:
+  LOW Modem_Pwr
+  LOW   SO2_Pwr                                            ' Turn OFF the pump, SO2 Sensor, and modem
+  DEBUG "Going to Main", CR
+RUN 0
+
+' -------------------------------------------------------------------------
+' Subroutines
+' -------------------------------------------------------------------------
+
+
+Init_Modem:
+    SEROUT LCD_Pin, lcdBaudRate, [lcdClear]  : PAUSE 12                           ' Clear LCD
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdline1, "Modem Power On"]
+    DEBUG CR, "Modem Power On", CR
+
+    DEBUG "Check Modem: "
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT" , CR]                             ' Check communication with modem
+    SERIN Modem_RX, ModemBaudRate, 2500, IridiumError1, [WAIT ("OK")]           ' Wait for response
+    SEROUT LCD_Pin, lcdBaudRate, [lcdNone,lcdLine2, "Modem Responded", 137]
+    DEBUG "Modem Responded", CR                                                  ' Modem responded
+    PAUSE 500
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT&D0" , CR]                           ' Set to ignore DTR signal
+    SEROUT LCD_Pin, lcdBaudRate, [lcdNone,lcdLine2, "Ignore DTR Input"]
+    PAUSE 500
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT&K0" , CR]                           ' Set to no flow control
+    SEROUT LCD_Pin, lcdBaudRate, [lcdNone,lcdLine3, "RTS/CTS Flow Ctrl OF"]
+    PAUSE 500
+RETURN
+
+
+Send_Iridium:
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDWT", CR]                         ' Send SBD command (Writes a Text message on the Module)
+    SERIN Modem_RX, ModemBaudRate, 2500, IridiumError1, [WAIT ("REA")]           ' Wait for response
+
+    DEBUG "UpL SBD", CR                                                          ' Display On Debug Window
+
+    SEROUT Modem_TX, ModemBaudRate, 25, ["T",DEC2 Hours,":",DEC2 Minutes,"D",DEC2 Month,"/",DEC2 Date]
+    DEBUG                                "T",DEC2 Hours,":",DEC2 Minutes,"D",DEC2 Month,"/",DEC2 Date
+
+    SEROUT Modem_TX, ModemBaudRate, 25, ["B",DEC2 (Bat_Voltg/1000),".",DEC1 Bat_Voltg/100] ' Voltage
+    DEBUG                                "B",DEC2 (Bat_Voltg/1000),".",DEC1 Bat_Voltg/100
+
+    SEROUT Modem_TX, ModemBaudRate, 25, ["I+",DEC2 (soT/10),".",DEC1 soT,"H",DEC2 (rhTrue/10)]  ' Temp/ Humidity
+    DEBUG                                "I+",DEC2 (soT/10),".",DEC1 soT,"H",DEC2 (rhTrue/10)
+
+    SEROUT Modem_TX, ModemBaudRate, 25, ["S",DEC5 SO2_Value,"R",DEC1 Rate,CR] ' SO2 Reading & Rate
+    DEBUG                                "S",DEC5 SO2_Value,"R",DEC1 Rate,CR
+
+    DEBUG "Snd SBDI...", CR                                                             ' Display On Debug Window
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDI", CR]                                 ' Initiate conection with satalite (sends data)
+    SERIN Modem_RX, ModemBaudRate, 30000, IridiumError2, [WAIT ("SBDI: "), Resp]        ' Wait for Response
+    DEBUG "Snd Res #", Resp, " ", CR
+    SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdLine4, "Snd Rec"]                         ' Display status on LCD
+    SEROUT LCD_Pin, lcdBaudRate, [lcdLine4+11, "Status#", Resp, " "]                    ' Display status on LCD
+
+    IF Resp = 50 THEN                                                                   ' Check if Error "2" = 50
+          PAUSE 3000
+          DEBUG "Snd ERR", CR                                                           ' Wait 3 seconds
+          GOTO IridiumError2                                                            ' SBD Send failed
+    ENDIF
+    SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdLine4, "Msg Sent!"]
+    PAUSE 3000                                                                          ' Wait 3 seconds
+RETURN                                                                                  ' All Iridium attempts have been made
+
+
+Rcv_Iridium:
+
+    DEBUG "Resp: ", Resp, CR
+
+    SEROUT LCD_Pin, lcdBaudRate, [lcdClear] : PAUSE 12                                    ' Clear Screen
+    DEBUG CR, "Snd SBDRT...Waiting for answer", CR
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone, lcdLine1, "Snd SBDRT/Wait Reply"]
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDRT", CR]                                  'Reads a Text message from the Module
+    'SERIN Modem_RX, ModemBaudRate, 5000, IridiumError2, [SKIP 2, SPSTR 18]
+    SERIN Modem_RX, ModemBaudRate, 10000, IridiumError2, [SPSTR 18]
+
+   FOR counter = 0 TO 17
+    GET counter, DataWord
+    MsgFlag = 0
+    DEBUG "DataWord:"
+    DEBUG DataWord, CR
+      IF DataWord = "=" THEN
+          GET counter+1, DataWord
+          MsgFlag = 1
+          DEBUG "DataWord inside IF:"
+          DEBUG DataWord, CR
+            IF DataWord = "1" THEN
+               Rate = 1
+               DEBUG "Rate set to:", BIN Rate, CR
+               ELSE
+               Rate = 0
+               DEBUG "Rate set to:", BIN Rate, CR
+            ENDIF
+          GOTO Continue
+      ENDIF
+  NEXT
+
+    Continue:
+    SEROUT LCD_Pin, lcdBaudRate, [lcdClear, lcdLine2, ? DataWord]  : PAUSE 2000
+
+    IF Resp = 49 THEN                                                               ' Check if Error "2" = 50
+        DEBUG "Msg Sent", CR
+        SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone,lcdLine4, "Msg Sent!"]           ' Display status on LCD
+        PAUSE 3000
+        GOTO MdmOFF                                                                      ' Wait 3 secs
+      ELSE
+        DEBUG "Snd/Rcv Done!", CR
+        SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone, lcdLine4, "Snd/Rcv Done!"]
+        PAUSE 3000
+        GOTO MdmOFF                                                                      ' Wait 3 secs
+    ENDIF
+RETURN
+
+
+IridiumError1:
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone, lcdLine4, "Phn ERR"]                        ' Display error message on LCD
+  DEBUG "Phn ERR", CR, CR                                                               ' Display On Debug Window
+  PAUSE 2000                                                                            ' Pause 2s
+RETURN
+
+
+IridiumError2:
+  ErrorCount = 1                                                                        ' Number of connection attempts
+
+  FOR i = 1 TO 3                                                                        ' Try to resend current record 3 times
+  PAUSE 5000                                                                            ' Pause 5s
+    DEBUG "Attempt number: ", DEC ErrorCount, CR                                        ' Display On Debug Window
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone, lcdLine4, "Attmpt #", DEC ErrorCount]    ' Display error message on LCD
+                                                                                        ' Clear Commands with modem
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDI", CR]                                 ' Resend SBD Initiate command
+    SERIN Modem_RX, ModemBaudRate, 5000, Error_Again, [WAIT ( "SBDI:"), Resp]           ' Wait for Response
+    DEBUG "Snd Res #", Resp, " ", CR                                                    ' Display status on LCD
+
+    IF Resp = 50 THEN                                                                   ' Check if Error "2" = 50
+      Error_Again:
+      DEBUG "Snd Res #", Resp, " ", CR
+      ErrorCount = ErrorCount + 1                                                       ' Update Error Count                                                                                  ' Display error message on LCD
+    ELSE
+      GOTO Return_from_Error2:
+    ENDIF
+  NEXT
+
+Return_from_Error2:
+  IF Resp = 49 THEN
+    DEBUG "Sent", CR
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone,lcdLine4, "Sent after err#:", DEC ErrorCount]  ' Display status on LCD
+  ELSE
+    DEBUG "Snd Failure", CR
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone,lcdLine4, "Snd Failure         "]                   ' Display status on LCD
+  ENDIF
+
+  PAUSE 3000                                                                            ' Pause 3s
+GOTO MdmOFF

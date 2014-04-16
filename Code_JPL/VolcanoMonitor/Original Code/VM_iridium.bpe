@@ -1,0 +1,408 @@
+' {$STAMP BS2pe}
+' {PORT COM6}
+' {$PBASIC 2.5}
+
+' -------------------------------------------------------------------------
+' I/O Definitions
+' -------------------------------------------------------------------------
+Hum_clk        PIN     0                       ' Humidity Clock
+Hum_Pwr        PIN     1                       ' Humidity Power
+Hum_data       PIN     2                       ' Humidity Data
+SO2_Pwr        PIN     3                       ' Voltage Relay Control (Pump & SO2 Sensor)
+Free           PIN     4                       ' Free
+Modem_Pwr      PIN     5                       ' Modem Power
+Modem_RX       PIN     6                       ' Modem Read
+Modem_Tx       PIN     7                       ' Modem Write
+RTC_Clk        PIN     8                       ' 1302 RTC Clock
+RTC_Data       PIN     9                       ' 1302 RTC Data
+RTC_Reset      PIN    10                       ' 1302 RTC Reset
+AD_Din         PIN    11                       ' 1270 data out of the ADC, in to the Stamp
+AD_Dout        PIN    12                       ' 1270 data in to the Stamp, out of the ADC
+AD_CS          PIN    13                       ' 1270 "chip select" pin
+AD_Clk         PIN    14                       ' 1270 clock pin
+LCD_Pin        PIN    15                       ' LCD Connection
+
+' -------------------------------------------------------------------------
+' Constants
+' -------------------------------------------------------------------------
+ShtTemp CON %00011                             ' read temperature
+ShtHumi CON %00101                             ' read humidity
+ShtStatW CON %00110                            ' status register write
+ShtStatR CON %00111                            ' status register read
+ShtReset CON %11110                            ' soft reset
+
+' 1-Wire Support
+'
+OW_FERst        CON     %0001                   ' Front-End Reset
+OW_BERst        CON     %0010                   ' Back-End Reset
+OW_BitMode      CON     %0100
+OW_HighSpd      CON     %1000
+
+ReadROM         CON     $33                     ' read ID, serial num, CRC
+MatchROM        CON     $55                     ' look for specific device
+SkipROM         CON     $CC                     ' skip rom (one device)
+SearchROM       CON     $F0                     ' search
+
+
+'Humidity constants
+
+Ack CON 0
+NoAck CON 1
+No CON 0
+Yes CON 1
+
+' LCD constants and commands
+lcdClear           CON           12              ' Form Feed, Clear and Home
+lcdNone            CON           22              ' No Cursor
+lcdBlock           CON           25              ' Cursor on and blink character
+lcdLine            CON           24              ' Cursor on and no blink character
+lcdLine1           CON           128             ' sets cursor to start of line 1
+lcdLine2           CON           148             ' sets cursor to start of line 2
+lcdLine3           CON           168             ' sets cursor to start of line 3
+lcdLine4           CON           188             ' sets cursor to start of line 4
+DegSym             CON           176
+
+' BaudRate
+
+#IF ($STAMP < BS2P) #THEN
+  #ERROR "This program requires BS2p, BS2pe, or BS2px"
+#ENDIF
+
+#SELECT $stamp
+  #CASE BS2E, BS2PE
+    lcdBaudRate        CON           32          ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16416       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+    'SO2SensRate      CON           0           ' Depth 4800, Sensor, 8 bits, no parity, 1 stop, True
+  #CASE BS2SX, BS2P
+    lcdBaudRate        CON           110         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16494       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+    'SO2SensRate      CON           0           ' Depth 4800, Sensor, 8 bits, no parity, 1 stop, true
+  #CASE BS2PX
+    lcdBaudRate        CON           188         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16572       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+    'SO2SensRate      CON           17197       ' Depth 4800, Sensor, 8 bits, no parity, 1 stop, true
+#ENDSELECT
+
+
+'Do we need this???
+
+'#DEFINE System = 1 'Change to 2 if using System 2
+
+'#IF System = 1 #THEN
+'Temp1          DATA     $28, $D2, $B8, $E5, $00, $00, $00, $0D
+'Temp2          DATA     $28, $52, $CD, $E5, $00, $00, $00, $58
+'Temp3          DATA     $28, $57, $06, $E6, $00, $00, $00, $69
+'Temp4          DATA     $28, $56, $CA, $E5, $00, $00, $00, $D5
+'Temp5          DATA     $28, $92, $78, $E5, $00, $00, $00, $5A
+'Temp6          DATA     $28, $A1, $B9, $E5, $00, $00, $00, $01
+'TempB          DATA     $22, $31, $62, $14, $00, $00, $00, $EB
+'TempA          DATA     $22, $9B, $A1, $09, $00, $00, $00, $B1
+'#ENDIF
+
+'#IF System = 2 #THEN
+'Temp1          DATA     $28, $DE, $04, $E6, $00, $00, $00, $96
+'Temp2          DATA     $28, $62, $EE, $E5, $00, $00, $00, $03
+'Temp3          DATA     $28, $5C, $FC, $E5, $00, $00, $00, $02
+'Temp4          DATA     $28, $3E, $75, $E5, $00, $00, $00, $97
+'Temp5          DATA     $28, $20, $D9, $E5, $00, $00, $00, $CD
+'Temp6          DATA     $28, $56, $7A, $E5, $00, $00, $00, $9A
+'Temp7          DATA     $22, $DC, $45, $14, $00, $00, $00, $21
+'Temp8          DATA     $22, $F7, $65, $14, $00, $00, $00, $97
+'#ENDIF
+
+' -----[ Temporary Variable Space ]-------------------------------------------
+'
+Byte_1          VAR     Byte      ' General Purpose Data (Byte)
+Byte_2          VAR     Byte      ' General Purpose Data (Byte)
+Byte_3          VAR     Byte      ' General Purpose Data (Byte)
+Word_1          VAR     Word      ' General Purpose Data (Word)
+Word_2          VAR     Word      ' General Purpose Data (Word)
+
+' -------------------------------------------------------------------------
+' Variables
+' -------------------------------------------------------------------------
+
+
+
+' Humidity
+ioByte    VAR   Byte_1                             ' data from/to SHT11
+ackBit    VAR   Bit                                ' ack/nak from/to SHT11
+toDelay   VAR   Byte_2                             ' timeout delay timer
+timeOut   VAR   Bit                                ' timeout status
+soT       VAR   Word_1                             ' temp counts from SHT11
+tC        VAR   Word_2                             ' temp - Celcius
+tF        VAR   Word                               ' temp - Fahrenheit
+soRH      VAR   Word                               ' humidity counts
+rhLin     VAR   Word                               ' humidity; linearized
+rhTrue    VAR   Word                               ' humidity; compensated
+status    VAR   Byte                               ' status byte
+
+
+' Time
+Seconds    VAR Byte_1
+Minutes    VAR Byte_2
+Hours      VAR Byte_3
+Date       VAR Byte
+Month      VAR Byte
+Year       VAR Byte
+
+
+Current_Record  VAR     Byte_2                  ' Pointer in Memory to current reading
+Record_Index    VAR     Word                    ' Memory Index
+Record_Length   CON     26                      ' Number of Bytes to store 1 reading
+i               VAR     Byte                    ' Generic Index
+counter       VAR     Nib                       ' Place holder for returning after VM_hum
+t             VAR     Nib                       ' time to wait between readings in miliseconds
+
+Address            VAR           Byte_1          ' Address in RAM Pack to write or read from
+DataWord           VAR           Word_1          ' Used to hold data to be sent or received
+ErrorCount         VAR           Byte_2          ' Number of connection attempts
+
+
+' -----[ ADC Constants ]-------------------------------------------------------
+
+CH0            CON     0                       ' analog channels
+CH1            CON     1
+
+AdcUP5          CON     0                       ' unipolar, 0 - 5 v
+AdcBP5          CON     1                       ' bipolar, +/- 5 v
+AdcUP10         CON     2                       ' unipolar, 0 - 10 v
+AdcBP10         CON     3                       ' bipolar, +/- 10 v
+Adc420          CON     4                       ' 4-20 mA input
+
+
+' -----[ ADC Variables ]-------------------------------------------------------
+
+
+chan            VAR     Nib                     ' ADC channel (0 - 7)
+mode            VAR     Nib                     ' ADC mode (0 - 4)
+config          VAR     Byte                    ' configuration byte
+adcRes          VAR     Nib                     ' ADC bits (1 - 12)
+adcRaw          VAR     Word_1                  ' ADC result (raw)
+mVolts          VAR     Word_2                  ' ADC in millivolts
+
+
+
+' -----[ EEPROM Data ]-----------------------------------------------------
+
+
+AdcCfg          DATA    %10000000, %10010000, %10100000, %10110000, %11000000, %11010000, %11100000, %11110000 ' 0-5
+
+
+
+' -------------------------------------------------------------------------
+' Program Code
+' -------------------------------------------------------------------------
+
+Main:
+GOSUB Init_Modem
+GOSUB Print_Time
+GOSUB Print_Hum
+GOSUB Print_LCD
+GOSUB Send_Iridium
+MdmOFF:
+DEBUG "Going to Messages"
+RUN 4
+'LOW Modem_Pwr
+'DEBUG "Going to Main AGAIN"
+'counter = 2
+'RUN 0
+
+' -------------------------------------------------------------------------
+' Subroutines
+' -------------------------------------------------------------------------
+
+
+Init_Modem:
+  SEROUT LCD_Pin, lcdBaudRate, [lcdClear]  : PAUSE 12                           ' Clear LCD
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdline1, "Mdm Pwr"]
+  DEBUG CR, "Modem Power", CR
+  HIGH Modem_Pwr                                                                ' Turn Modem on
+  PAUSE 10000                                                                   ' Wait for 10 seconds for Modem to register
+
+  DEBUG "CM:"
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT" , CR]                             ' Check communication with modem
+    SERIN Modem_RX, ModemBaudRate, 2500,IridiumError1, [WAIT ("OK")]            ' Wait for response
+    SEROUT LCD_Pin,lcdBaudRate, [lcdNone,lcdLine2,"Modem Responded",137]
+    PAUSE 3000
+
+  DEBUG "MR", CR                                                                ' Modem responded
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT&D0" , CR]                          ' Set to ignore DTR signal
+    SEROUT LCD_Pin,lcdBaudRate, [lcdNone,lcdLine2,"Ignore DTR Input"]
+    PAUSE 3000
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT&K0" , CR]                          ' Set to no flow control
+    SEROUT LCD_Pin,lcdBaudRate, [lcdNone,lcdLine2,"RTS/CTS Flow Ctrl OF"]
+    PAUSE 3000
+RETURN
+
+
+Get_Time:
+  HIGH RTC_Reset
+  SHIFTOUT RTC_Data, RTC_Clk, LSBFIRST, [%1\1,%11111\5,%10\2]
+  SHIFTIN RTC_Data, RTC_Clk, LSBPRE, [Seconds,Minutes,Hours,Date,Month,Year,Year]
+  Seconds = 10 * Seconds.HIGHNIB + Seconds.LOWNIB
+  Minutes = 10 * Minutes.HIGHNIB + Minutes.LOWNIB
+  Hours   = 10 * Hours.HIGHNIB   + Hours.LOWNIB
+  Date    = 10 * Date.HIGHNIB    + Date.LOWNIB
+  Month   = 10 * Month.HIGHNIB   + Month.LOWNIB
+  Year    = 10 * Year.HIGHNIB    + Year.LOWNIB
+  LOW RTC_Reset
+RETURN
+
+Store_Time:
+  WRITE Record_Index + 0, Hours
+  WRITE Record_Index + 1, Minutes
+  WRITE Record_Index + 2, Month
+  WRITE Record_Index + 3, Date
+RETURN
+
+Print_Time:
+  DEBUG  "T=", DEC2 Hours,":",DEC2 Minutes,":",DEC2 Seconds, "  D=",DEC2 Month,"/", DEC2 Date,"/",DEC2 Year, CR
+RETURN
+
+Print_Hum:
+  DEBUG  "Temp=", DEC (tF / 10), ".", DEC1 tF, DegSym,"  Hum=",DEC (rhTrue / 10), ".", DEC1 rhTrue, "% ", CR
+RETURN
+
+Print_LCD:
+  SEROUT LCD_Pin, lcdBaudRate, [lcdClear, lcdLine1, "T", DEC2 Hours,":",DEC2 Minutes,":",DEC2 Seconds,
+                                          "  D",DEC2 Month,"/", DEC2 Date,"/",DEC2 Year ]
+  SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdLine2, "t", DEC (tF / 10), " H", DEC (rhTrue / 10), "%" ]
+  GET Record_Index + 6, Word DataWord
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine2 + 10, "S", DEC DataWord]       ' Display SO2 on LCD
+  GET Record_Index + 7, Word DataWord
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine2 + 15,  "V", DEC DataWord]       ' Display voltage on LCD
+
+Send_Iridium:
+  'FOR Current_Record = 0 TO 1      '''should be 0 to 23
+    Record_Index = Current_Record * Record_Length
+
+
+    DEBUG  "Transferring Data...", CR                                              ' Display On Debug Window
+    DEBUG  "Snd Rec #", DEC Current_Record + 1, CR                                 ' Debug Record #
+
+
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDWT", CR]                         ' Send SBD command (Writes a Text message on the Module)
+    SERIN Modem_RX, ModemBaudRate, 2500, IridiumError1, [WAIT ("REA")]           ' Wait for response
+
+    DEBUG "UpL SBD", CR                                                            ' Display On Debug Window
+    IF counter = 3 THEN SEROUT Modem_TX, ModemBaudRate, 25, ["!!!"]
+
+    '-------------------------------------------------------------------------------------------
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone, lcdLine3, "Snd Data...    "] : PAUSE 1000
+
+    READ Record_Index, DataWord                                             ' Hour
+    SEROUT Modem_TX, ModemBaudRate, 25, [ "T", DEC2 DataWord,":"]
+    DEBUG " T=", DEC2 DataWord,":"
+
+    READ Record_Index + 1, DataWord                                         ' Minute
+    SEROUT Modem_TX, ModemBaudRate, 25, [ DEC2 DataWord," D"]
+    DEBUG DEC2 DataWord," D="
+
+    READ Record_Index + 2, DataWord                                         ' Month
+    SEROUT Modem_TX, ModemBaudRate, 25, [ DEC2 DataWord, "/"]
+    DEBUG DEC2 DataWord,"/"
+
+    READ Record_Index + 3, DataWord                                         ' Date
+    SEROUT Modem_TX, ModemBaudRate, 25, [ DEC2 DataWord]
+    DEBUG DEC2 DataWord, CR
+
+    GET Record_Index + 7, Word DataWord                                         ' Voltage
+    SEROUT Modem_TX, ModemBaudRate, 25, [ "B", DEC DataWord, CR]
+    DEBUG " Voltage:", DEC DataWord, CR
+
+    GET Record_Index + 4, Word DataWord                                         ' Temp
+    SEROUT Modem_TX, ModemBaudRate, 25, [ "I", DEC (DataWord / 10), ".", DEC1 DataWord]
+    DEBUG  " Temp:", DEC (DataWord / 10), ".", DEC1 DataWord, DegSym, CR
+
+    READ Record_Index + 5, Word DataWord                                         ' Humdity
+    SEROUT Modem_TX, ModemBaudRate, 25, [ "H", DEC (DataWord / 10), ".", DEC1 DataWord, "% "]
+    DEBUG " Hum:", DEC (DataWord / 10), ".", DEC1 DataWord, "% ", CR
+
+    GET Record_Index + 6, Word DataWord                                         ' SO2
+    SEROUT Modem_TX, ModemBaudRate, 25, [ "S", DEC DataWord]
+    DEBUG " SO2:", DEC DataWord, CR
+
+    SEROUT Modem_TX, ModemBaudRate, 25, [ "R0", CR ]                                ' The zero must be changed to an actual variable
+    DEBUG " Sampling Rate "
+
+
+    DEBUG CR, "Snd SBDI...Waiting for answer", CR                                           ' Display On Debug Window
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDI", CR]                                  'Initiate conection with satalite (sends data)
+    SERIN Modem_RX, ModemBaudRate, 30000, IridiumError2, [WAIT ("SBDI:"), DataWord, counter, Record_Index] ' Wait for Response
+    DEBUG "MO Status: ", DEC DataWord, CR
+    DEBUG "MOMSN: ", DEC counter, CR
+    DEBUG "MT Status: ", DEC Record_Index, CR
+
+    'SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone, lcdLine3, "Snd Rec#", DEC2 Current_Record + 1]       ' Display status on LCD
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdLine3+11, "Status#", DataWord, " "]              ' Display status on LCD
+
+
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDD0", CR]                                   'Clear mobile originated buffer
+    SERIN Modem_RX, ModemBaudRate, 30000, IridiumError2, [WAIT ("0")]                      'WAIT FOR Response
+
+    IF DataWord = 50 THEN                                                               ' Check if Error "2" = 50
+          PAUSE 3000
+          DEBUG "Snd ERR", CR                                                           ' Wait 3 seconds
+          GOTO IridiumError2                                                            ' SBD Send failed
+      ELSE
+        SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone, lcdLine4, "Msg Sent!"]
+        PAUSE 3000                                                                      ' Wait 3 secs
+    ENDIF
+  RETURN                                                                                ' All Iridium attempts have been made
+
+    '------------------------------------------------------------------------------------
+
+Return_from_Error2:
+  IF DataWord = 49 THEN
+    DEBUG "Sent", CR
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone,lcdLine4, "Msg Sent after error#:", DEC ErrorCount]           ' Display status on LCD
+    PAUSE 5000
+    GOTO MdmOFF
+  ELSE
+    DEBUG "Snd Failure", CR
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone,lcdLine4, "Snd Failure"]                   ' Display status on LCD
+    PAUSE 5000
+    'GOTO MdmOFF
+  ENDIF
+    'SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdClear, "Pause 20sec"]  : PAUSE 12        ' Clear LCD
+  'NEXT                                                                                  ' Send Next Record
+    SEROUT LCD_Pin, lcdBaudRate, [lcdNone, lcdClear, lcdLine4, "Pause 20sec"]  : PAUSE 12         ' Clear LCD
+
+  PAUSE 2000                                                                            ' Pause 20s
+  GOTO MdmOFF
+RETURN
+
+
+IridiumError1:
+  SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone, lcdLine4, "Phn ERR"]                                 ' Display error message on LCD
+  DEBUG "Phn ERR", CR, CR                                                               ' Display On Debug Window
+  PAUSE 2000                                                                            ' Pause 2s
+RETURN
+
+
+
+IridiumError2:
+  ErrorCount = 1                                                                        ' Number of connection attempts
+
+
+  FOR Address = 1 TO 5                                                                  ' Try to resend current record 5 times
+  PAUSE 5000                                                                            ' Pause 5s
+    DEBUG "Attempt number: ", DEC ErrorCount, CR                                        ' Display On Debug Window
+    SEROUT LCD_Pin, lcdBaudRate, 5, [lcdNone, lcdLine4, "Attempt #", DEC ErrorCount]    ' Display error message on LCD
+                                                                                        ' Clear Commands with modem
+    SEROUT Modem_TX, ModemBaudRate, 25, ["AT+SBDI", CR]                                 ' Resend SBD Initiate command
+    SERIN Modem_RX, ModemBaudRate, 1000, Error_Again, [WAIT ( "SBDI:"), DataWord]       ' Wait for Response
+    DEBUG "Snd Res #", DataWord, " ", CR                                                ' Display status on LCD
+
+    IF DataWord = 50 THEN
+      Error_Again:                                                                      ' Check if Error "2" = 50
+      DEBUG "Snd Res #", DataWord, " ", CR
+      ErrorCount = ErrorCount + 1                                                       ' Update Error Count                                                                                  ' Display error message on LCD
+    ELSE
+      GOTO Return_from_Error2:
+    ENDIF
+    'GOTO MdmOFF
+  NEXT
+
+GOTO Return_from_Error2

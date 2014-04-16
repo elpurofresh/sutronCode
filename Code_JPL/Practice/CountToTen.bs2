@@ -1,0 +1,16 @@
+'CountToTen.bs2
+'Using FOR...NEXT loop
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+myCounter         VAR     Word
+
+FOR myCounter = 1 TO 10
+  DEBUG ? myCounter
+  PAUSE 500
+NEXT
+
+DEBUG CR, "All done!"
+
+END

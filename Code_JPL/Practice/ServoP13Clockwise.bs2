@@ -1,0 +1,13 @@
+'ServoP13Clockwise.bs2
+'Run the servo connected to P13 at full speed clockwise
+
+
+' {$STAMP BS2}
+' {$PBASIC 2.5}
+
+DEBUG "Program Running"
+
+DO
+  PULSOUT 13, 650
+  PAUSE 20
+LOOP

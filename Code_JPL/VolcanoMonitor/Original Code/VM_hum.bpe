@@ -1,0 +1,356 @@
+' {$STAMP BS2pe}
+' {PORT COM6}
+' {$PBASIC 2.5}
+
+' -------------------------------------------------------------------------
+' I/O Definitions
+' -------------------------------------------------------------------------
+Hum_clk        PIN     0                       ' Humidity Clock
+Hum_Pwr        PIN     1                       ' Humidity Power
+Hum_data       PIN     2                       ' Humidity Data
+SO2_Pwr        PIN     3                       ' Voltage Relay Control (Pump & SO2 Sensor)
+Free           PIN     4                       ' Free
+Modem_Pwr      PIN     5                       ' Modem Power
+Modem_RX       PIN     6                       ' Modem Read
+Modem_Tx       PIN     7                       ' Modem Write
+RTC_Clk        PIN     8                       ' 1302 RTC Clock
+RTC_Data       PIN     9                       ' 1302 RTC Data
+RTC_Reset      PIN    10                       ' 1302 RTC Reset
+AD_Din         PIN    11                       ' 1270 data out of the ADC, in to the Stamp
+AD_Dout        PIN    12                       ' 1270 data in to the Stamp, out of the ADC
+AD_CS          PIN    13                       ' 1270 "chip select" pin
+AD_Clk         PIN    14                       ' 1270 clock pin
+LCD_Pin        PIN    15                       ' LCD Connection
+
+' -------------------------------------------------------------------------
+' Constants
+' -------------------------------------------------------------------------
+ShtTemp CON %00011                             ' read temperature
+ShtHumi CON %00101                             ' read humidity
+ShtStatW CON %00110                            ' status register write
+ShtStatR CON %00111                            ' status register read
+ShtReset CON %11110                            ' soft reset
+
+' 1-Wire Support
+'
+OW_FERst        CON     %0001                   ' Front-End Reset
+OW_BERst        CON     %0010                   ' Back-End Reset
+OW_BitMode      CON     %0100
+OW_HighSpd      CON     %1000
+
+ReadROM         CON     $33                     ' read ID, serial num, CRC
+MatchROM        CON     $55                     ' look for specific device
+SkipROM         CON     $CC                     ' skip rom (one device)
+SearchROM       CON     $F0                     ' search
+
+
+'Humidity constants
+
+Ack CON 0
+NoAck CON 1
+No CON 0
+Yes CON 1
+
+' LCD constants and commands
+lcdClear           CON           12              ' Form Feed, Clear and Home
+lcdNone            CON           22              ' No Cursor
+lcdBlock           CON           25              ' Cursor on and blink character
+lcdLine            CON           24              ' Cursor on and no blink character
+lcdLine1           CON           128             ' sets cursor to start of line 1
+lcdLine2           CON           148             ' sets cursor to start of line 2
+lcdLine3           CON           168             ' sets cursor to start of line 3
+lcdLine4           CON           188             ' sets cursor to start of line 4
+DegSym             CON           176
+
+' BaudRate
+
+#IF ($STAMP < BS2P) #THEN
+  #ERROR "This program requires BS2p, BS2pe, or BS2px"
+#ENDIF
+
+#SELECT $stamp
+  #CASE BS2E, BS2PE
+    lcdBaudRate        CON           32          ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16416       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+    'SO2SensRate      CON           0           ' Depth 4800, Sensor, 8 bits, no parity, 1 stop, True
+  #CASE BS2SX, BS2P
+    lcdBaudRate        CON           110         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16494       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+    'SO2SensRate      CON           0           ' Depth 4800, Sensor, 8 bits, no parity, 1 stop, true
+  #CASE BS2PX
+    lcdBaudRate        CON           188         ' LCD, 19200 Baud, 8-bit, No-parity, True
+    ModemBaudRate      CON           16572       ' Iridium, 19200 baud, 8 bit, no parity, inverted
+    'SO2SensRate      CON           17197       ' Depth 4800, Sensor, 8 bits, no parity, 1 stop, true
+#ENDSELECT
+
+
+'Do we need this???
+
+'#DEFINE System = 1 'Change to 2 if using System 2
+
+'#IF System = 1 #THEN
+'Temp1          DATA     $28, $D2, $B8, $E5, $00, $00, $00, $0D
+'Temp2          DATA     $28, $52, $CD, $E5, $00, $00, $00, $58
+'Temp3          DATA     $28, $57, $06, $E6, $00, $00, $00, $69
+'Temp4          DATA     $28, $56, $CA, $E5, $00, $00, $00, $D5
+'Temp5          DATA     $28, $92, $78, $E5, $00, $00, $00, $5A
+'Temp6          DATA     $28, $A1, $B9, $E5, $00, $00, $00, $01
+'TempB          DATA     $22, $31, $62, $14, $00, $00, $00, $EB
+'TempA          DATA     $22, $9B, $A1, $09, $00, $00, $00, $B1
+'#ENDIF
+
+'#IF System = 2 #THEN
+'Temp1          DATA     $28, $DE, $04, $E6, $00, $00, $00, $96
+'Temp2          DATA     $28, $62, $EE, $E5, $00, $00, $00, $03
+'Temp3          DATA     $28, $5C, $FC, $E5, $00, $00, $00, $02
+'Temp4          DATA     $28, $3E, $75, $E5, $00, $00, $00, $97
+'Temp5          DATA     $28, $20, $D9, $E5, $00, $00, $00, $CD
+'Temp6          DATA     $28, $56, $7A, $E5, $00, $00, $00, $9A
+'Temp7          DATA     $22, $DC, $45, $14, $00, $00, $00, $21
+'Temp8          DATA     $22, $F7, $65, $14, $00, $00, $00, $97
+'#ENDIF
+
+' -----[ Temporary Variable Space ]-------------------------------------------
+'
+Byte_1          VAR     Byte      ' General Purpose Data (Byte)
+Byte_2          VAR     Byte      ' General Purpose Data (Byte)
+Byte_3          VAR     Byte      ' General Purpose Data (Byte)
+Word_1          VAR     Word      ' General Purpose Data (Word)
+Word_2          VAR     Word      ' General Purpose Data (Word)
+
+' -------------------------------------------------------------------------
+' Variables
+' -------------------------------------------------------------------------
+
+
+
+' Humidity
+ioByte    VAR   Byte_1                             ' data from/to SHT11
+ackBit    VAR   Bit                                ' ack/nak from/to SHT11
+toDelay   VAR   Byte_2                             ' timeout delay timer
+timeOut   VAR   Bit                                ' timeout status
+soT       VAR   Word_1                             ' temp counts from SHT11
+tC        VAR   Word_2                             ' temp - Celcius
+tF        VAR   Word                               ' temp - Fahrenheit
+soRH      VAR   Word                               ' humidity counts
+rhLin     VAR   Word                               ' humidity; linearized
+rhTrue    VAR   Word                               ' humidity; compensated
+status    VAR   Byte                               ' status byte
+
+
+' Time
+Seconds    VAR Byte_1
+Minutes    VAR Byte_2
+Hours      VAR Byte_3
+Date       VAR Byte
+Month      VAR Byte
+Year       VAR Byte
+
+
+Current_Record  VAR     Byte_2                  ' Pointer in Memory to current reading
+Record_Index    VAR     Word                    ' Memory Index
+Record_Length   CON     26                      ' Number of Bytes to store 1 reading
+i               VAR     Byte                    ' Generic Index
+counter       VAR     Nib                       ' Place holder for returning after VM_hum
+t             VAR     Nib                       ' time to wait between readings in miliseconds
+
+Address            VAR           Byte_1          ' Address in RAM Pack to write or read from
+DataWord           VAR           Word_1          ' Used to hold data to be sent or received
+ErrorCount         VAR           Byte_2          ' Number of connection attempts
+
+
+' -----[ ADC Constants ]-------------------------------------------------------
+
+CH0            CON     0                       ' analog channels
+CH1            CON     1
+
+AdcUP5          CON     0                       ' unipolar, 0 - 5 v
+AdcBP5          CON     1                       ' bipolar, +/- 5 v
+AdcUP10         CON     2                       ' unipolar, 0 - 10 v
+AdcBP10         CON     3                       ' bipolar, +/- 10 v
+Adc420          CON     4                       ' 4-20 mA input
+
+
+' -----[ ADC Variables ]-------------------------------------------------------
+
+
+chan            VAR     Nib                     ' ADC channel (0 - 7)
+mode            VAR     Nib                     ' ADC mode (0 - 4)
+config          VAR     Byte                    ' configuration byte
+adcRes          VAR     Nib                     ' ADC bits (1 - 12)
+adcRaw          VAR     Word_1                  ' ADC result (raw)
+mVolts          VAR     Word_2                  ' ADC in millivolts
+
+
+
+' -----[ EEPROM Data ]-----------------------------------------------------
+
+
+AdcCfg          DATA    %10000000, %10010000, %10100000, %10110000, %11000000, %11010000, %11100000, %11110000 ' 0-5
+
+
+
+' -------------------------------------------------------------------------
+' Initialization
+' -------------------------------------------------------------------------
+Initialize:
+  GOSUB SHT_Connection_Reset                      ' reset device connection
+  PAUSE 250                                        ' let DEBUG window open
+  'DEBUG CLS,
+  DEBUG "SHT11 Sensor Data", CR,
+        "-----------------", CR
+
+' -------------------------------------------------------------------------
+' Program Code
+' -------------------------------------------------------------------------
+Main:
+    GOSUB SHT_Measure_Temp
+    DEBUG CRSRXY, 0, 3,
+    "soT...... ", DEC soT, CR,
+    "tC....... ", DEC (tC / 10), ".", DEC1 tC, DegSym, " ", CR,
+    "tF....... ", DEC (tF / 10), ".", DEC1 tF, DegSym, " "
+    GOSUB SHT_Measure_Humidity
+    DEBUG CRSRXY, 0, 7,
+    "soRH..... ", DEC soRH, CR,
+    "rhLin.... ", DEC (rhLin / 10), ".", DEC1 rhLin, "% ", CR,
+    "rhTrue... ", DEC (rhTrue / 10), ".", DEC1 rhTrue, "% "
+    DEBUG CR
+    PAUSE 1000
+    GOSUB Store_Hum
+  counter = 2
+  DEBUG "Going to ADC"
+  RUN 3
+' -------------------------------------------------------------------------
+' Subroutines
+' -------------------------------------------------------------------------
+' connection reset: 9 clock cyles with ShtData high, then start sequence
+'
+SHT_Connection_Reset:
+  SHIFTOUT Hum_data, Hum_clk, LSBFIRST, [$FFF\9]
+                                                     ' generates SHT11 "start" sequence
+                                                     '         _____        _____
+                                                     ' ShtData      |_______|
+                                                     '              ___   ___
+                                                     ' Hum_clk   ___| |___| |___
+
+SHT_Start:
+  INPUT Hum_data                                     ' let pull-up take high
+  LOW Hum_clk
+  HIGH Hum_clk
+  LOW Hum_data
+  LOW Hum_clk
+  HIGH Hum_clk
+  INPUT Hum_data
+  LOW Hum_clk
+  RETURN
+                                                     ' measure temperature
+                                                     ' -- celcius = raw * 0.01 - 40
+                                                     ' -- fahrenheit = raw * 0.018 - 40
+SHT_Measure_Temp:
+  GOSUB SHT_Start                                    ' alert device
+  ioByte = ShtTemp                                   ' temperature command
+  GOSUB SHT_Write_Byte                               ' send command
+  GOSUB SHT_Wait                                     ' wait for measurement
+  ackBit = Ack                                       ' another read follows
+  GOSUB SHT_Read_Byte                                ' get MSB
+  soT.HIGHBYTE = ioByte
+  ackBit = NoAck                                     ' last read
+  GOSUB SHT_Read_Byte                                ' get LSB
+  soT.LOWBYTE = ioByte
+                                                     ' Note: Conversion factors are multiplied by 10 to return the
+                                                     ' temperature values in tenths of degrees
+  tC = soT ** $1999 - 400                            ' convert to tenths C
+  tF = soT ** $2E14 - 400                            ' convert to tenths F
+  RETURN
+                                                     ' measure humidity
+SHT_Measure_Humidity:
+  GOSUB SHT_Start                                    ' alert device
+  ioByte = ShtHumi                                   ' humidity command
+  GOSUB SHT_Write_Byte                               ' send command
+  GOSUB SHT_Wait                                     ' wait for measurement
+  ackBit = Ack                                       ' another read follows
+  GOSUB SHT_Read_Byte                                ' get MSB
+  soRH.HIGHBYTE = ioByte
+  ackBit = NoAck                                     ' last read
+  GOSUB SHT_Read_Byte                                ' get LSB
+  soRH.LOWBYTE = ioByte
+                                                     ' linearize humidity
+                                                     ' rhLin = (soRH * 0.0405) - (soRH^2 * 0.0000028) - 4
+                                                     ' for the BASIC Stamp:
+                                                     ' rhLin = (soRH * 0.0405) - (soRH * 0.002 * soRH * 0.0014) - 4
+                                                     ' Conversion factors are multiplied by 10 to return tenths
+  rhLin = (soRH ** $67AE) - (soRH ** $83 * soRH ** $5B) - 40
+                                                        ' temperature compensated humidity
+                                                        ' rhTrue = (tc - 25) * (soRH * 0.00008 + 0.01) + rhLin
+                                                        ' Conversion factors are multiplied by 10 to return tenths
+                                                        ' -- simplified
+  rhTrue = (tC - 250) * (soRH ** $34) + rhLin
+  RETURN
+                                                        ' sends "status"
+SHT_Write_Status:
+  GOSUB SHT_Start                                       ' alert device
+  ioByte = ShtStatW                                     ' write to status reg cmd
+  GOSUB SHT_Write_Byte                                  ' send command
+  ioByte = status
+  GOSUB SHT_Write_Byte
+RETURN
+                                                        ' returns "status"
+'
+SHT_Read_Status:
+  GOSUB SHT_Start                                    ' alert device
+  ioByte = ShtStatW                                  ' write to status reg cmd
+  GOSUB SHT_Read_Byte                                ' send command
+  ackBit = NoAck                                     ' only one byte to read
+  GOSUB SHT_Read_Byte
+  RETURN
+                                                     ' sends "ioByte"
+                                                     ' returns "ackBit"
+SHT_Write_Byte:
+  SHIFTOUT Hum_data, Hum_clk, MSBFIRST, [ioByte]     ' send byte
+  SHIFTIN Hum_data, Hum_clk, LSBPRE, [ackBit\1]      ' get ack bit
+  RETURN
+                                  ' sends "ackBit"
+SHT_Read_Byte:
+  SHIFTIN Hum_data, Hum_clk, MSBPRE, [ioByte]        ' get byte
+  SHIFTOUT Hum_data, Hum_clk, LSBFIRST, [ackBit\1]   ' send ack bit
+  INPUT Hum_data                                     ' release data line
+  RETURN
+                                                     ' wait for device to finish measurement (pulls data line low)
+                                                     ' -- timeout after ~1/4 second
+
+
+Store_Hum:
+  PUT Record_Index + 4, Word tF
+  WRITE Record_Index + 5, Word rhTrue
+RETURN
+
+SHT_Wait:
+  INPUT Hum_data                                      ' data line is input
+  timeOut = No                                        ' assume no timeout
+  FOR toDelay = 1 TO 250                              ' wait ~1/4 second
+  IF (Hum_data = 0) THEN EXIT
+  PAUSE 1
+  NEXT
+  IF (toDelay = 250) THEN timeOut = Yes               ' loop completed = timeout
+  RETURN
+                                                      ' reset SHT11/15 with soft reset
+SHT_Soft_Reset:
+  GOSUB SHT_Connection_Reset                          ' reset the connection
+  ioByte = ShtReset                                   ' reset command
+  ackBit = NoAck                                      ' only one byte to send
+  GOSUB SHT_Write_Byte                                ' send it
+  PAUSE 11                                            ' wait at least 11 ms
+  RETURN
+                                                      'In HIGH humidity applications, the SHT11 heater can be switched ON briefly TO prevent condensation.
+                                                      'Another use of the heater is TO test the operation of the sensor: by reading before enabling the heater
+                                                      'AND immediately after the sensor can be verified by noting a higher temperature AND lower humidity.
+                                                      'The following subroutines can be used TO switch the SHT11 heater ON AND off.
+Heater_On:
+  status = %00000100                                   ' heater bit = On
+  GOSUB SHT_Write_Status
+  RETURN
+
+Heater_Off:
+  status = %00000000                                   ' heater bit = Off
+  GOSUB SHT_Write_Status
+  RETURN
